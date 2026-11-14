@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">Листай</string>
+    <string name="tab_library">Полка</string>
+    <string name="tab_quotes">Цитаты</string>
+    <string name="tab_settings">Настройки</string>
+    <string name="action_add_book">Добавить книгу</string>
+    <string name="action_continue_reading">Продолжить</string>
+    <string name="action_search_books">Поиск по названию или автору</string>
+    <string name="empty_library_title">На полке пока пусто</string>
+    <string name="empty_library_subtitle">Откройте книгу в формате EPUB, FB2, TXT или PDF с телефона — она сохранится локально вместе с обложкой и прогрессом.</string>
+    <string name="empty_quotes_title">Сохранённых цитат пока нет</string>
+    <string name="empty_quotes_subtitle">Во время чтения нажмите на любой абзац или выберите «Сохранить цитату», чтобы собрать свою коллекцию мыслей.</string>
+    <string name="cd_app_logo">Логотип читалки Листай</string>
+    <string name="cd_empty_shelf">Иллюстрация книжной полки</string>
+    <string name="cd_back">Назад</string>
+    <string name="cd_bookmark">Закладка</string>
+    <string name="cd_toc">Оглавление и заметки</string>
+    <string name="cd_appearance">Настройки текста и темы</string>
+    <string name="cd_tts">Озвучить текст</string>
+    <string name="cd_delete_book">Удалить книгу</string>
+    <string name="cd_share_quote">Поделиться цитатой</string>
+</resources>

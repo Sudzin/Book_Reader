@@ -1,0 +1,6 @@
+{
+  "name": "Листай",
+  "description": "Минималистичная локальная читалка книг для Android и Google Pixel 9 с поддержкой EPUB, FB2, TXT и PDF, темами чтения, закладками, цитатами и озвучкой.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
