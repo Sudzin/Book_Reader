@@ -20,4 +20,11 @@
     <string name="cd_delete_book">Удалить книгу</string>
     <string name="cd_share_quote">Поделиться цитатой</string>
     <string name="cd_search_in_book">Поиск по тексту книги</string>
+    <string name="tts_channel_name">Озвучка книг</string>
+    <string name="tts_channel_description">Управление чтением книги вслух на экране блокировки и в уведомлениях</string>
+    <string name="tts_action_pause">Пауза</string>
+    <string name="tts_action_resume">Продолжить</string>
+    <string name="tts_action_prev">Назад на абзац</string>
+    <string name="tts_action_next">Вперёд на абзац</string>
+    <string name="tts_action_stop">Стоп</string>
 </resources>

@@ -3,6 +3,7 @@ package com.example.ui.screens
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -69,6 +70,8 @@ import androidx.compose.ui.platform.LocalFontFamilyResolver
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -83,6 +86,9 @@ import com.example.reader.engine.PageSlice
 import com.example.reader.engine.PaginationCacheKey
 import com.example.reader.engine.ParagraphKind
 import com.example.reader.engine.ReaderParagraphStyleResolver
+import com.example.ui.theme.AnimatedReaderColors
+import com.example.ui.theme.LocalAnimationsEnabled
+import com.example.ui.theme.rememberAnimatedReaderColors
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -139,7 +145,8 @@ fun ReflowablePagesReader(
   val layoutDirection = LocalLayoutDirection.current
   val haptics = LocalHapticFeedback.current
   val coroutineScope = rememberCoroutineScope()
-  val theme = preferences.readerTheme
+  val animationsEnabled = LocalAnimationsEnabled.current
+  val theme = rememberAnimatedReaderColors(preferences.readerTheme, animationsEnabled)
 
   val measurer = remember(fontFamilyResolver, density, layoutDirection) {
     ComposeTextLineMeasurer(
@@ -160,8 +167,9 @@ fun ReflowablePagesReader(
   ) {
     val topPaddingDp = statusTopDp + 24.dp
     val bottomPaddingDp = navBottomDp + 38.dp
-    val maxContentWidthDp = maxWidth.coerceAtMost(680.dp)
+    val maxTextColumnDp = ReaderParagraphStyleResolver.maxLineColumnWidthDp(preferences)
     val horizMarginDp = preferences.horizontalMarginDp.dp
+    val maxContentWidthDp = maxWidth.coerceAtMost(maxTextColumnDp + horizMarginDp * 2)
 
     val viewportWidthPx = with(density) {
       (maxContentWidthDp - horizMarginDp * 2).toPx().roundToInt().coerceAtLeast(100)
@@ -252,23 +260,29 @@ fun ReflowablePagesReader(
       return@BoxWithConstraints
     }
 
-    val chapterSlideSpec = remember {
+    val chapterSlideSpec = remember(animationsEnabled) {
       tween<IntOffset>(
-        durationMillis = 240,
+        durationMillis = if (animationsEnabled) 240 else 0,
         easing = FastOutSlowInEasing,
       )
     }
-    val chapterFadeSpec = remember { tween<Float>(durationMillis = 180) }
+    val chapterFadeSpec = remember(animationsEnabled) {
+      tween<Float>(durationMillis = if (animationsEnabled) 180 else 0)
+    }
 
     AnimatedContent(
       targetState = activeSnapshot.key.chapterIndex,
       transitionSpec = {
-        val forward = targetState >= initialState
-        val enter = slideInHorizontally(chapterSlideSpec) { w -> if (forward) w else -w } +
-          fadeIn(chapterFadeSpec)
-        val exit = slideOutHorizontally(chapterSlideSpec) { w -> if (forward) -w else w } +
-          fadeOut(chapterFadeSpec)
-        enter togetherWith exit
+        if (!animationsEnabled) {
+          fadeIn(tween(0)) togetherWith fadeOut(tween(0))
+        } else {
+          val forward = targetState >= initialState
+          val enter = slideInHorizontally(chapterSlideSpec) { w -> if (forward) w else -w } +
+            fadeIn(chapterFadeSpec)
+          val exit = slideOutHorizontally(chapterSlideSpec) { w -> if (forward) -w else w } +
+            fadeOut(chapterFadeSpec)
+          enter togetherWith exit
+        }
       },
       label = "chapter_page_transition",
       modifier = Modifier.fillMaxSize(),
@@ -289,17 +303,25 @@ fun ReflowablePagesReader(
           pageCount = { pages.size.coerceAtLeast(1) },
         )
 
-        val snapSpring = remember {
-          spring<Float>(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMediumLow,
-          )
+        val snapSpring = remember(animationsEnabled) {
+          if (animationsEnabled) {
+            spring<Float>(
+              dampingRatio = Spring.DampingRatioNoBouncy,
+              stiffness = Spring.StiffnessMediumLow,
+            )
+          } else {
+            snap()
+          }
         }
-        val tapTurnTween = remember {
-          tween<Float>(
-            durationMillis = 220,
-            easing = FastOutSlowInEasing,
-          )
+        val tapTurnTween = remember(animationsEnabled) {
+          if (animationsEnabled) {
+            tween<Float>(
+              durationMillis = 220,
+              easing = FastOutSlowInEasing,
+            )
+          } else {
+            snap()
+          }
         }
 
         LaunchedEffect(pagerState, pages, snapChapterIdx) {
@@ -324,6 +346,26 @@ fun ReflowablePagesReader(
           }
         }
 
+        LaunchedEffect(ttsActiveParagraphIndex, pages, snapChapterIdx) {
+          val activePara = ttsActiveParagraphIndex
+          if (activePara != null && activePara >= 0) {
+            val currentHasPara = pages.getOrNull(pagerState.currentPage)?.slices?.any {
+              it.paragraphIndex == activePara
+            } == true
+            val desiredPage = ChapterPaginator.findPageForLocator(
+              pages,
+              Locator(chapterIndex = snapChapterIdx, paragraphIndex = activePara, charOffset = 0),
+            )
+            if (!currentHasPara && desiredPage != pagerState.currentPage) {
+              if (animationsEnabled) {
+                pagerState.animateScrollToPage(desiredPage, animationSpec = tapTurnTween)
+              } else {
+                pagerState.scrollToPage(desiredPage)
+              }
+            }
+          }
+        }
+
         pageNavHandle.onGoToPage = { page ->
           val target = page.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
           coroutineScope.launch {
@@ -334,7 +376,11 @@ fun ReflowablePagesReader(
           val next = pagerState.currentPage + 1
           if (next < pages.size) {
             coroutineScope.launch {
-              pagerState.animateScrollToPage(next, animationSpec = tapTurnTween)
+              if (animationsEnabled) {
+                pagerState.animateScrollToPage(next, animationSpec = tapTurnTween)
+              } else {
+                pagerState.scrollToPage(next)
+              }
             }
           } else if (snapChapterIdx + 1 < content.chapters.size) {
             onNextChapter()
@@ -344,7 +390,11 @@ fun ReflowablePagesReader(
           val prev = pagerState.currentPage - 1
           if (prev >= 0) {
             coroutineScope.launch {
-              pagerState.animateScrollToPage(prev, animationSpec = tapTurnTween)
+              if (animationsEnabled) {
+                pagerState.animateScrollToPage(prev, animationSpec = tapTurnTween)
+              } else {
+                pagerState.scrollToPage(prev)
+              }
             }
           } else if (snapChapterIdx > 0) {
             onPrevChapterToEnd()
@@ -411,12 +461,18 @@ fun ReflowablePagesReader(
             modifier = Modifier
               .fillMaxSize()
               .graphicsLayer {
-                val pageOffset = (pagerState.currentPage - pageIdx) + pagerState.currentPageOffsetFraction
-                val absOffset = abs(pageOffset).coerceIn(0f, 1f)
-                val scale = 1f - absOffset * 0.018f
-                scaleX = scale
-                scaleY = scale
-                alpha = 1f - absOffset * 0.14f
+                if (animationsEnabled) {
+                  val pageOffset = (pagerState.currentPage - pageIdx) + pagerState.currentPageOffsetFraction
+                  val absOffset = abs(pageOffset).coerceIn(0f, 1f)
+                  val scale = 1f - absOffset * 0.018f
+                  scaleX = scale
+                  scaleY = scale
+                  alpha = 1f - absOffset * 0.14f
+                } else {
+                  scaleX = 1f
+                  scaleY = 1f
+                  alpha = 1f
+                }
               }
               .onGloballyPositioned { coords ->
                 containerRootOffset = coords.positionInRoot()
@@ -463,21 +519,30 @@ fun ReflowablePagesReader(
             Column(
               modifier = Modifier
                 .fillMaxSize()
-                .widthIn(max = 680.dp)
+                .widthIn(max = maxContentWidthDp)
                 .padding(
                   start = horizMarginDp,
                   end = horizMarginDp,
                   top = topPaddingDp,
                   bottom = bottomPaddingDp,
                 ),
-              verticalArrangement = Arrangement.spacedBy(12.dp),
+              verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
+              if (page.hasSyntheticChapterHeader) {
+                ChapterHeroHeading(
+                  title = snapChapter.title,
+                  preferences = preferences,
+                  theme = theme,
+                )
+              }
+
               page.slices.forEachIndexed { idx, slice ->
                 val isQuoted = quotedParagraphIndices.contains(slice.paragraphIndex)
                 val isTtsActive = ttsActiveParagraphIndex == slice.paragraphIndex
                 PageSliceView(
                   slice = slice,
                   preferences = preferences,
+                  theme = theme,
                   isQuoted = isQuoted,
                   isTtsActive = isTtsActive,
                   modifier = Modifier.onGloballyPositioned { coords ->
@@ -503,16 +568,54 @@ fun ReflowablePagesReader(
 }
 
 @Composable
+internal fun ChapterHeroHeading(
+  title: String,
+  preferences: ReaderPreferences,
+  theme: AnimatedReaderColors,
+  modifier: Modifier = Modifier,
+) {
+  val spec = remember(title, preferences) {
+    ReaderParagraphStyleResolver.resolve(ParagraphKind.HEADING, title, preferences)
+  }
+  Column(
+    modifier = modifier
+      .fillMaxWidth()
+      .padding(top = spec.extraTopPaddingDp, bottom = spec.extraBottomPaddingDp)
+      .semantics(mergeDescendants = true) { heading() }
+      .testTag("reader_chapter_hero_heading"),
+  ) {
+    Text(
+      text = title,
+      style = spec.textStyle,
+      color = theme.text,
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    Box(
+      modifier = Modifier
+        .width(40.dp)
+        .height(2.dp)
+        .clip(RoundedCornerShape(1.dp))
+        .background(theme.accent.copy(alpha = 0.55f)),
+    )
+  }
+}
+
+@Composable
 private fun PageSliceView(
   slice: PageSlice,
   preferences: ReaderPreferences,
+  theme: AnimatedReaderColors,
   isQuoted: Boolean,
   isTtsActive: Boolean,
   modifier: Modifier = Modifier,
 ) {
-  val theme = preferences.readerTheme
-  val spec = remember(slice.kind, slice.text, preferences) {
-    ReaderParagraphStyleResolver.resolve(slice.kind, slice.text, preferences)
+  val spec = remember(slice.kind, slice.text, slice.isFirstSliceOfParagraph, preferences) {
+    ReaderParagraphStyleResolver.resolve(
+      kind = slice.kind,
+      text = slice.text,
+      preferences = preferences,
+      isContinuationSlice = !slice.isFirstSliceOfParagraph,
+    )
   }
 
   val topPad = if (slice.isFirstSliceOfParagraph) spec.extraTopPaddingDp else 0.dp
@@ -530,12 +633,25 @@ private fun PageSliceView(
 
   when (slice.kind) {
     ParagraphKind.HEADING -> {
-      Text(
-        text = slice.text,
-        style = spec.textStyle,
-        color = theme.text,
+      Column(
         modifier = baseModifier.padding(top = topPad, bottom = bottomPad),
-      )
+      ) {
+        Text(
+          text = slice.text,
+          style = spec.textStyle,
+          color = theme.text,
+        )
+        if (slice.isLastSliceOfParagraph) {
+          Spacer(modifier = Modifier.height(6.dp))
+          Box(
+            modifier = Modifier
+              .width(36.dp)
+              .height(2.dp)
+              .clip(RoundedCornerShape(1.dp))
+              .background(theme.accent.copy(alpha = 0.5f)),
+          )
+        }
+      }
     }
 
     ParagraphKind.SUBHEADING -> {

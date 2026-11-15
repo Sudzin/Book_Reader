@@ -122,6 +122,7 @@ data class ReaderPreferences(
   val volumeKeyNavigation: Boolean = true,
   val keepScreenOn: Boolean = true,
   val ttsSpeed: Float = 1.0f,
+  val ttsNotificationPrompted: Boolean = false,
 )
 
 class PreferencesRepository(private val context: Context) {
@@ -138,6 +139,7 @@ class PreferencesRepository(private val context: Context) {
     val VOLUME_NAV = booleanPreferencesKey("volume_key_nav")
     val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
     val TTS_SPEED = floatPreferencesKey("tts_speed")
+    val TTS_NOTIFICATION_PROMPTED = booleanPreferencesKey("tts_notification_prompted")
   }
 
   val preferencesFlow: Flow<ReaderPreferences> = context.readerDataStore.data.map { prefs ->
@@ -160,6 +162,7 @@ class PreferencesRepository(private val context: Context) {
       volumeKeyNavigation = prefs[Keys.VOLUME_NAV] ?: true,
       keepScreenOn = prefs[Keys.KEEP_SCREEN_ON] ?: true,
       ttsSpeed = (prefs[Keys.TTS_SPEED] ?: 1.0f).coerceIn(0.7f, 2.0f),
+      ttsNotificationPrompted = prefs[Keys.TTS_NOTIFICATION_PROMPTED] ?: false,
     )
   }
 
@@ -209,5 +212,9 @@ class PreferencesRepository(private val context: Context) {
 
   suspend fun updateTtsSpeed(speed: Float) {
     context.readerDataStore.edit { it[Keys.TTS_SPEED] = speed.coerceIn(0.7f, 2.0f) }
+  }
+
+  suspend fun markTtsNotificationPrompted() {
+    context.readerDataStore.edit { it[Keys.TTS_NOTIFICATION_PROMPTED] = true }
   }
 }

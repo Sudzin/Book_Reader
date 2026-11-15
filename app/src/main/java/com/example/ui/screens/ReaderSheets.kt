@@ -33,21 +33,27 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -77,6 +83,9 @@ import com.example.data.local.ReaderThemeMode
 import com.example.reader.engine.BookSearchResult
 import com.example.reader.engine.Locator
 import com.example.reader.engine.TocEntry
+import com.example.ui.components.ThemedThinSlider
+import com.example.ui.components.inactiveTrackColor
+import com.example.ui.theme.rememberAnimatedReaderColors
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -94,10 +103,42 @@ fun ReaderAppearanceSheet(
   onHyphenationChanged: (Boolean) -> Unit,
   onVolumeNavChanged: (Boolean) -> Unit,
 ) {
+  val theme = rememberAnimatedReaderColors(preferences.readerTheme)
+  val inactiveTrack = theme.inactiveTrackColor(theme.surface)
+  val chipColors = FilterChipDefaults.filterChipColors(
+    containerColor = theme.surfaceContainerLow,
+    labelColor = theme.text,
+    iconColor = theme.text,
+    selectedContainerColor = theme.accentContainer,
+    selectedLabelColor = theme.onAccentContainer,
+    selectedLeadingIconColor = theme.accent,
+  )
+  val chipBorderFor = @Composable { selected: Boolean ->
+    FilterChipDefaults.filterChipBorder(
+      enabled = true,
+      selected = selected,
+      borderColor = theme.outline,
+      selectedBorderColor = theme.accent,
+      borderWidth = 1.dp,
+      selectedBorderWidth = 1.5.dp,
+    )
+  }
+  val switchColors = SwitchDefaults.colors(
+    checkedThumbColor = theme.onAccent,
+    checkedTrackColor = theme.accent,
+    checkedBorderColor = theme.accent,
+    uncheckedThumbColor = theme.mutedText,
+    uncheckedTrackColor = theme.surfaceContainerHigh,
+    uncheckedBorderColor = theme.outline,
+  )
+
   ModalBottomSheet(
     onDismissRequest = onDismiss,
-    containerColor = MaterialTheme.colorScheme.surface,
-    contentColor = MaterialTheme.colorScheme.onSurface,
+    containerColor = theme.surface,
+    contentColor = theme.text,
+    dragHandle = {
+      BottomSheetDefaults.DragHandle(color = theme.mutedText.copy(alpha = 0.45f))
+    },
   ) {
     Column(
       modifier = Modifier
@@ -110,9 +151,10 @@ fun ReaderAppearanceSheet(
       Text(
         text = "Оформление страницы",
         style = MaterialTheme.typography.titleLarge,
+        color = theme.text,
       )
 
-      Text(text = "Тема чтения", style = MaterialTheme.typography.labelLarge)
+      Text(text = "Тема чтения", style = MaterialTheme.typography.labelLarge, color = theme.text)
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -128,7 +170,7 @@ fun ReaderAppearanceSheet(
             color = mode.background,
             border = BorderStroke(
               width = if (selected) 2.5.dp else 1.dp,
-              color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+              color = if (selected) theme.accent else theme.outline,
             ),
           ) {
             Column(
@@ -154,15 +196,18 @@ fun ReaderAppearanceSheet(
         }
       }
 
-      Text(text = "Режим чтения", style = MaterialTheme.typography.labelLarge)
+      Text(text = "Режим чтения", style = MaterialTheme.typography.labelLarge, color = theme.text)
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
       ) {
         ReaderReadingMode.entries.forEach { mode ->
+          val isSelected = preferences.readingMode == mode
           FilterChip(
-            selected = preferences.readingMode == mode,
+            selected = isSelected,
             onClick = { onReadingModeSelected(mode) },
+            colors = chipColors,
+            border = chipBorderFor(isSelected),
             label = {
               Text(
                 text = mode.title,
@@ -177,16 +222,19 @@ fun ReaderAppearanceSheet(
         }
       }
 
-      Text(text = "Шрифт", style = MaterialTheme.typography.labelLarge)
+      Text(text = "Шрифт", style = MaterialTheme.typography.labelLarge, color = theme.text)
       FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
       ) {
         ReaderFontOption.entries.forEach { option ->
+          val isSelected = preferences.fontOption == option
           FilterChip(
-            selected = preferences.fontOption == option,
+            selected = isSelected,
             onClick = { onFontSelected(option) },
+            colors = chipColors,
+            border = chipBorderFor(isSelected),
             label = {
               Text(
                 text = option.title,
@@ -208,21 +256,25 @@ fun ReaderAppearanceSheet(
           Text(
             text = "Размер текста",
             style = MaterialTheme.typography.labelLarge,
+            color = theme.text,
             modifier = Modifier.weight(1f).padding(end = 8.dp),
           )
           Text(
             text = "${preferences.fontSizeSp.roundToInt()} pt",
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = theme.accent,
             maxLines = 1,
             softWrap = false,
           )
         }
-        Slider(
+        ThemedThinSlider(
           value = preferences.fontSizeSp,
           onValueChange = onFontSizeChanged,
           valueRange = 14f..28f,
           steps = 13,
+          activeColor = theme.accent,
+          inactiveColor = inactiveTrack,
+          modifier = Modifier.testTag("appearance_slider_font_size"),
         )
       }
 
@@ -235,21 +287,25 @@ fun ReaderAppearanceSheet(
           Text(
             text = "Межстрочный интервал",
             style = MaterialTheme.typography.labelLarge,
+            color = theme.text,
             modifier = Modifier.weight(1f).padding(end = 8.dp),
           )
           Text(
             text = String.format("%.2fx", preferences.lineHeightMultiplier),
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = theme.accent,
             maxLines = 1,
             softWrap = false,
           )
         }
-        Slider(
+        ThemedThinSlider(
           value = preferences.lineHeightMultiplier,
           onValueChange = onLineHeightChanged,
           valueRange = 1.2f..2.0f,
           steps = 7,
+          activeColor = theme.accent,
+          inactiveColor = inactiveTrack,
+          modifier = Modifier.testTag("appearance_slider_line_height"),
         )
       }
 
@@ -262,21 +318,25 @@ fun ReaderAppearanceSheet(
           Text(
             text = "Поля страницы",
             style = MaterialTheme.typography.labelLarge,
+            color = theme.text,
             modifier = Modifier.weight(1f).padding(end = 8.dp),
           )
           Text(
             text = "${preferences.horizontalMarginDp} dp",
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
+            color = theme.accent,
             maxLines = 1,
             softWrap = false,
           )
         }
-        Slider(
+        ThemedThinSlider(
           value = preferences.horizontalMarginDp.toFloat(),
           onValueChange = { onMarginChanged(it.roundToInt()) },
           valueRange = 12f..36f,
           steps = 5,
+          activeColor = theme.accent,
+          inactiveColor = inactiveTrack,
+          modifier = Modifier.testTag("appearance_slider_margin"),
         )
       }
 
@@ -288,11 +348,13 @@ fun ReaderAppearanceSheet(
         Text(
           text = "Выравнивание по ширине",
           style = MaterialTheme.typography.bodyLarge,
+          color = theme.text,
           modifier = Modifier.weight(1f).padding(end = 12.dp),
         )
         Switch(
           checked = preferences.justifyText,
           onCheckedChange = onJustifyChanged,
+          colors = switchColors,
         )
       }
 
@@ -304,11 +366,13 @@ fun ReaderAppearanceSheet(
         Text(
           text = "Переносы",
           style = MaterialTheme.typography.bodyLarge,
+          color = theme.text,
           modifier = Modifier.weight(1f).padding(end = 12.dp),
         )
         Switch(
           checked = preferences.hyphenationEnabled,
           onCheckedChange = onHyphenationChanged,
+          colors = switchColors,
           modifier = Modifier.testTag("switch_hyphenation"),
         )
       }
@@ -321,11 +385,13 @@ fun ReaderAppearanceSheet(
         Text(
           text = "Листание кнопками громкости",
           style = MaterialTheme.typography.bodyLarge,
+          color = theme.text,
           modifier = Modifier.weight(1f).padding(end = 12.dp),
         )
         Switch(
           checked = preferences.volumeKeyNavigation,
           onCheckedChange = onVolumeNavChanged,
+          colors = switchColors,
         )
       }
     }
@@ -351,6 +417,9 @@ fun BookNavigationSheet(
     onDismissRequest = onDismiss,
     containerColor = MaterialTheme.colorScheme.surface,
     contentColor = MaterialTheme.colorScheme.onSurface,
+    dragHandle = {
+      BottomSheetDefaults.DragHandle(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f))
+    },
   ) {
     Column(
       modifier = Modifier
@@ -361,6 +430,15 @@ fun BookNavigationSheet(
         selectedTabIndex = selectedTab,
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.primary,
+        indicator = { tabPositions ->
+          TabRowDefaults.SecondaryIndicator(
+            modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+            color = MaterialTheme.colorScheme.primary,
+          )
+        },
+        divider = {
+          HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        },
       ) {
         Tab(
           selected = selectedTab == 0,
@@ -635,6 +713,8 @@ fun SaveQuoteDialog(
   AlertDialog(
     onDismissRequest = onDismiss,
     containerColor = MaterialTheme.colorScheme.surface,
+    titleContentColor = MaterialTheme.colorScheme.onSurface,
+    textContentColor = MaterialTheme.colorScheme.onSurface,
     title = { Text("Сохранить цитату") },
     text = {
       Column(
@@ -648,6 +728,7 @@ fun SaveQuoteDialog(
           Text(
             text = "«$paragraphText»",
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 5,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(12.dp),
@@ -686,6 +767,15 @@ fun SaveQuoteDialog(
           onValueChange = { note = it },
           label = { Text("Личная заметка (необязательно)") },
           maxLines = 3,
+          colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = MaterialTheme.colorScheme.primary,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+            focusedLabelColor = MaterialTheme.colorScheme.primary,
+            unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+            cursorColor = MaterialTheme.colorScheme.primary,
+          ),
           modifier = Modifier.fillMaxWidth(),
         )
       }
@@ -693,13 +783,22 @@ fun SaveQuoteDialog(
     confirmButton = {
       Button(
         onClick = { onSave(note, selectedColor) },
+        colors = ButtonDefaults.buttonColors(
+          containerColor = MaterialTheme.colorScheme.primary,
+          contentColor = MaterialTheme.colorScheme.onPrimary,
+        ),
         modifier = Modifier.testTag("confirm_save_quote"),
       ) {
         Text("Сохранить")
       }
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) {
+      TextButton(
+        onClick = onDismiss,
+        colors = ButtonDefaults.textButtonColors(
+          contentColor = MaterialTheme.colorScheme.primary,
+        ),
+      ) {
         Text("Отмена")
       }
     },
@@ -720,6 +819,9 @@ fun ReaderSearchSheet(
     onDismissRequest = onDismiss,
     containerColor = MaterialTheme.colorScheme.surface,
     contentColor = MaterialTheme.colorScheme.onSurface,
+    dragHandle = {
+      BottomSheetDefaults.DragHandle(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f))
+    },
   ) {
     Column(
       modifier = Modifier
@@ -731,6 +833,7 @@ fun ReaderSearchSheet(
       Text(
         text = "Поиск по тексту книги",
         style = MaterialTheme.typography.titleLarge,
+        color = MaterialTheme.colorScheme.onSurface,
       )
 
       OutlinedTextField(
@@ -747,6 +850,19 @@ fun ReaderSearchSheet(
           }
         },
         shape = RoundedCornerShape(14.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+          focusedBorderColor = MaterialTheme.colorScheme.primary,
+          unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+          focusedLeadingIconColor = MaterialTheme.colorScheme.primary,
+          unfocusedLeadingIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+          focusedTrailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+          unfocusedTrailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+          focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+          unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+          focusedTextColor = MaterialTheme.colorScheme.onSurface,
+          unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+          cursorColor = MaterialTheme.colorScheme.primary,
+        ),
         modifier = Modifier
           .fillMaxWidth()
           .testTag("reader_search_input"),
@@ -776,7 +892,7 @@ fun ReaderSearchSheet(
               .padding(vertical = 32.dp),
             contentAlignment = Alignment.Center,
           ) {
-            CircularProgressIndicator()
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
           }
         }
 

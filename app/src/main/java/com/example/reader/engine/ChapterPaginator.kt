@@ -10,6 +10,7 @@ import androidx.compose.ui.text.intl.LocaleList
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -55,6 +56,7 @@ data class BookPage(
   val startLocator: Locator,
   val endParagraphIndex: Int,
   val endCharInParagraph: Int,
+  val hasSyntheticChapterHeader: Boolean = false,
 )
 
 data class ParagraphLayoutSpec(
@@ -67,10 +69,16 @@ data class ParagraphLayoutSpec(
 )
 
 object ReaderParagraphStyleResolver {
+  fun maxLineColumnWidthDp(preferences: ReaderPreferences): Dp {
+    val charFactor = if (preferences.fontOption == ReaderFontOption.JETBRAINS_MONO) 39f else 32f
+    return (preferences.fontSizeSp * charFactor).dp.coerceIn(320.dp, 580.dp)
+  }
+
   fun resolve(
     kind: ParagraphKind,
     text: String,
     preferences: ReaderPreferences,
+    isContinuationSlice: Boolean = false,
   ): ParagraphLayoutSpec {
     val baseSize = preferences.fontSizeSp
     val bodyLineHeight = (baseSize * preferences.lineHeightMultiplier).sp
@@ -84,15 +92,15 @@ object ReaderParagraphStyleResolver {
       ParagraphKind.HEADING -> ParagraphLayoutSpec(
         textStyle = TextStyle(
           fontFamily = preferences.fontOption.fontFamily,
-          fontSize = (baseSize + 5f).sp,
-          lineHeight = ((baseSize + 5f) * 1.28f).sp,
-          fontWeight = FontWeight.SemiBold,
+          fontSize = (baseSize + 9f).sp,
+          lineHeight = ((baseSize + 9f) * 1.22f).sp,
+          fontWeight = FontWeight.Bold,
         ),
         textAlign = TextAlign.Start,
         extraStartPaddingDp = 0.dp,
         extraEndPaddingDp = 0.dp,
         extraTopPaddingDp = 16.dp,
-        extraBottomPaddingDp = 10.dp,
+        extraBottomPaddingDp = 18.dp,
       )
 
       ParagraphKind.SUBHEADING -> ParagraphLayoutSpec(
@@ -149,8 +157,8 @@ object ReaderParagraphStyleResolver {
         textAlign = TextAlign.Start,
         extraStartPaddingDp = 10.dp,
         extraEndPaddingDp = 10.dp,
-        extraTopPaddingDp = 14.dp,
-        extraBottomPaddingDp = 14.dp,
+        extraTopPaddingDp = 10.dp,
+        extraBottomPaddingDp = 10.dp,
       )
 
       ParagraphKind.BODY -> ParagraphLayoutSpec(
@@ -158,6 +166,11 @@ object ReaderParagraphStyleResolver {
           fontFamily = preferences.fontOption.fontFamily,
           fontSize = baseSize.sp,
           lineHeight = bodyLineHeight,
+          textIndent = if (isContinuationSlice) {
+            TextIndent.None
+          } else {
+            TextIndent(firstLine = (baseSize * 1.4f).sp)
+          },
           hyphens = hyphens,
           lineBreak = lineBreak,
           localeList = localeList,
@@ -165,8 +178,8 @@ object ReaderParagraphStyleResolver {
         textAlign = if (preferences.justifyText) TextAlign.Justify else TextAlign.Start,
         extraStartPaddingDp = 0.dp,
         extraEndPaddingDp = 0.dp,
-        extraTopPaddingDp = 4.dp,
-        extraBottomPaddingDp = 4.dp,
+        extraTopPaddingDp = 0.dp,
+        extraBottomPaddingDp = 0.dp,
       )
     }
   }
@@ -272,6 +285,9 @@ class ChapterPaginator(
     density: Density,
     measurer: TextLineMeasurer,
   ): List<BookPage> {
+    val needsSyntheticHeader = chapter.title.isNotBlank() &&
+      chapter.paragraphs.firstOrNull()?.kind != ParagraphKind.HEADING
+
     if (chapter.paragraphs.isEmpty()) {
       return listOf(
         BookPage(
@@ -281,20 +297,38 @@ class ChapterPaginator(
           startLocator = Locator(chapter.index, 0, 0),
           endParagraphIndex = 0,
           endCharInParagraph = 0,
+          hasSyntheticChapterHeader = needsSyntheticHeader,
         )
       )
     }
 
     val safeHeightPx = viewportHeightPx.coerceAtLeast(120).toFloat()
-    val paragraphGapPx = with(density) { 12.dp.toPx() }
+    val paragraphGapPx = 0f
     val pages = mutableListOf<BookPage>()
     val currentSlices = mutableListOf<PageSlice>()
-    var usedHeightPx = 0f
+    val syntheticHeaderHeightPx = if (needsSyntheticHeader) {
+      val headerSpec = ReaderParagraphStyleResolver.resolve(ParagraphKind.HEADING, chapter.title, preferences)
+      val measuredHeader = measurer.measure(
+        text = chapter.title,
+        style = headerSpec.textStyle,
+        textAlign = headerSpec.textAlign,
+        maxWidthPx = viewportWidthPx.coerceAtLeast(48),
+      )
+      val topPx = with(density) { headerSpec.extraTopPaddingDp.toPx() }
+      val bottomPx = with(density) { headerSpec.extraBottomPaddingDp.toPx() }
+      val ornamentPx = with(density) { 10.dp.toPx() }
+      (measuredHeader.totalHeightPx + topPx + bottomPx + ornamentPx)
+        .coerceAtMost(safeHeightPx * 0.55f)
+    } else {
+      0f
+    }
+    var usedHeightPx = syntheticHeaderHeightPx
 
     fun flushPage() {
       if (currentSlices.isEmpty()) return
       val first = currentSlices.first()
       val last = currentSlices.last()
+      val isFirstPageOfChapter = pages.isEmpty()
       pages.add(
         BookPage(
           pageIndexInChapter = pages.size,
@@ -307,6 +341,7 @@ class ChapterPaginator(
           ),
           endParagraphIndex = last.paragraphIndex,
           endCharInParagraph = last.endCharInParagraph,
+          hasSyntheticChapterHeader = isFirstPageOfChapter && needsSyntheticHeader,
         )
       )
       currentSlices.clear()
@@ -315,6 +350,16 @@ class ChapterPaginator(
 
     for (paragraph in chapter.paragraphs) {
       val spec = ReaderParagraphStyleResolver.resolve(paragraph.kind, paragraph.text, preferences)
+      val continuationSpec = if (paragraph.kind == ParagraphKind.BODY) {
+        ReaderParagraphStyleResolver.resolve(
+          kind = paragraph.kind,
+          text = paragraph.text,
+          preferences = preferences,
+          isContinuationSlice = true,
+        )
+      } else {
+        spec
+      }
       val horizExtraPx = with(density) { (spec.extraStartPaddingDp + spec.extraEndPaddingDp).toPx() }
       val topExtraPx = with(density) { spec.extraTopPaddingDp.toPx() }
       val bottomExtraPx = with(density) { spec.extraBottomPaddingDp.toPx() }
@@ -353,6 +398,7 @@ class ChapterPaginator(
       while (fromLine < lines.size) {
         val gap = if (currentSlices.isEmpty()) 0f else paragraphGapPx
         val isFirstSlice = fromLine == 0
+        val sliceSpec = if (isFirstSlice) spec else continuationSpec
         val sliceTopExtra = if (isFirstSlice) topExtraPx else 0f
         val remainingPx = safeHeightPx - usedHeightPx - gap - sliceTopExtra
 
@@ -422,8 +468,8 @@ class ChapterPaginator(
           val sliceBottomExtra = if (isLastSlice) bottomExtraPx else 0f
           val reMeasured = measurer.measure(
             text = sliceText,
-            style = spec.textStyle,
-            textAlign = spec.textAlign,
+            style = sliceSpec.textStyle,
+            textAlign = sliceSpec.textAlign,
             maxWidthPx = effectiveWidthPx,
           )
           if (reMeasured.totalHeightPx + sliceBottomExtra <= availableForLines || toLine <= fromLine + 1) {
@@ -438,8 +484,8 @@ class ChapterPaginator(
           val sliceBottomExtra = if (isLastSlice) bottomExtraPx else 0f
           val reMeasured = measurer.measure(
             text = sliceText,
-            style = spec.textStyle,
-            textAlign = spec.textAlign,
+            style = sliceSpec.textStyle,
+            textAlign = sliceSpec.textAlign,
             maxWidthPx = effectiveWidthPx,
           )
           reMeasured.totalHeightPx + sliceTopExtra + sliceBottomExtra
@@ -480,6 +526,7 @@ class ChapterPaginator(
           startLocator = Locator(chapter.index, 0, 0),
           endParagraphIndex = 0,
           endCharInParagraph = 0,
+          hasSyntheticChapterHeader = needsSyntheticHeader,
         )
       )
     }

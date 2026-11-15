@@ -11,6 +11,7 @@ import com.example.data.local.QuoteEntity
 import com.example.data.local.ReaderPreferences
 import com.example.data.repository.BookRepository
 import com.example.data.repository.ImportResult
+import com.example.reader.tts.TtsPlaybackManager
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -148,6 +149,12 @@ class LibraryViewModel(
 
   fun setKeepScreenOn(enabled: Boolean) {
     viewModelScope.launch { preferencesRepository.updateKeepScreenOn(enabled) }
+  }
+
+  fun setTtsSpeed(speed: Float) {
+    val clamped = speed.coerceIn(0.7f, 2.0f)
+    TtsPlaybackManager.peek()?.setSpeed(clamped)
+    viewModelScope.launch { preferencesRepository.updateTtsSpeed(clamped) }
   }
 
   class Factory(

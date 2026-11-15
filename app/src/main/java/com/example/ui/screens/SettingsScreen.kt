@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.ViewDay
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Card
@@ -31,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -44,6 +46,11 @@ import androidx.compose.ui.unit.dp
 import com.example.data.local.ReaderPreferences
 import com.example.data.local.ReaderReadingMode
 import com.example.data.local.ReaderThemeMode
+import com.example.ui.components.ThemedThinSlider
+import com.example.ui.components.inactiveTrackColor
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -56,6 +63,7 @@ fun SettingsScreen(
   onToggleDynamicColor: (Boolean) -> Unit,
   onToggleVolumePaging: (Boolean) -> Unit,
   onToggleKeepScreenOn: (Boolean) -> Unit,
+  onTtsSpeedChanged: (Float) -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   Box(
@@ -281,6 +289,125 @@ fun SettingsScreen(
       }
 
       Text(
+        text = "Озвучка текста",
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.primary,
+      )
+
+      Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+          containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+      ) {
+        val cardSurface = MaterialTheme.colorScheme.surfaceContainerLow
+        val inactiveTrack = preferences.readerTheme.inactiveTrackColor(cardSurface)
+        Column(modifier = Modifier.padding(16.dp)) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Icon(
+              imageVector = Icons.Default.RecordVoiceOver,
+              contentDescription = null,
+              tint = MaterialTheme.colorScheme.primary,
+            )
+            Column(
+              modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 14.dp),
+            ) {
+              Text(
+                text = "Скорость речи",
+                style = MaterialTheme.typography.titleSmall,
+              )
+              Text(
+                text = "Чтение вслух на экране блокировки и в фоне",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+            Surface(
+              shape = RoundedCornerShape(10.dp),
+              color = MaterialTheme.colorScheme.primaryContainer,
+            ) {
+              Text(
+                text = String.format(Locale.US, "%.1fx", preferences.ttsSpeed),
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier
+                  .padding(horizontal = 10.dp, vertical = 4.dp)
+                  .testTag("settings_tts_speed_value"),
+              )
+            }
+          }
+
+          Spacer(modifier = Modifier.height(10.dp))
+
+          ThemedThinSlider(
+            value = preferences.ttsSpeed,
+            onValueChange = { raw ->
+              val snapped = (raw * 10f).roundToInt() / 10f
+              onTtsSpeedChanged(snapped.coerceIn(0.7f, 2.0f))
+            },
+            valueRange = 0.7f..2.0f,
+            activeColor = MaterialTheme.colorScheme.primary,
+            inactiveColor = inactiveTrack,
+            modifier = Modifier
+              .fillMaxWidth()
+              .testTag("settings_tts_speed_slider"),
+          )
+
+          Spacer(modifier = Modifier.height(6.dp))
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            listOf(0.8f, 1.0f, 1.2f, 1.5f, 1.8f).forEach { preset ->
+              val selected = abs(preferences.ttsSpeed - preset) < 0.06f
+              Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = if (selected) {
+                  MaterialTheme.colorScheme.primaryContainer
+                } else {
+                  MaterialTheme.colorScheme.surfaceContainerHigh
+                },
+                border = BorderStroke(
+                  width = if (selected) 1.5.dp else 1.dp,
+                  color = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                  } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                  },
+                ),
+                modifier = Modifier
+                  .weight(1f)
+                  .testTag("settings_tts_preset_${(preset * 10).roundToInt()}")
+                  .clickable { onTtsSpeedChanged(preset) },
+              ) {
+                Text(
+                  text = String.format(Locale.US, "%.1fx", preset),
+                  style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                  ),
+                  color = if (selected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                  } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                  },
+                  textAlign = TextAlign.Center,
+                  maxLines = 1,
+                  modifier = Modifier.padding(vertical = 8.dp),
+                )
+              }
+            }
+          }
+        }
+      }
+
+      Text(
         text = "Поддерживаемые форматы",
         style = MaterialTheme.typography.titleMedium,
         color = MaterialTheme.colorScheme.primary,
@@ -395,6 +522,14 @@ private fun SettingSwitchRow(
     Switch(
       checked = checked,
       onCheckedChange = onCheckedChange,
+      colors = SwitchDefaults.colors(
+        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+        checkedTrackColor = MaterialTheme.colorScheme.primary,
+        checkedBorderColor = MaterialTheme.colorScheme.primary,
+        uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        uncheckedBorderColor = MaterialTheme.colorScheme.outline,
+      ),
       modifier = Modifier.testTag(testTag),
     )
   }

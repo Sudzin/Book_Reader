@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:width="66dp"
-        android:height="66dp"
-        android:drawable="@drawable/ic_reader_logo_1794685413231"
-        android:gravity="center" />
-</layer-list>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#8C4B2D"
+        android:pathData="M52.1,41.5C44.5,35.5 34.5,35 27,38V69.5C34.5,66.5 44.5,67 52.1,73V41.5ZM55.9,41.5V73C63.5,67 73.5,66.5 81,69.5V38C73.5,35 63.5,35.5 55.9,41.5Z" />
+</vector>

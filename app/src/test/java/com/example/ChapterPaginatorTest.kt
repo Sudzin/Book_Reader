@@ -2,7 +2,10 @@ package com.example
 
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.dp
 import com.example.data.local.ReaderFontOption
 import com.example.data.local.ReaderPreferences
 import com.example.data.local.ReaderReadingMode
@@ -14,9 +17,11 @@ import com.example.reader.engine.MeasuredLine
 import com.example.reader.engine.MeasuredParagraphLayout
 import com.example.reader.engine.PaginationCacheKey
 import com.example.reader.engine.ParagraphKind
+import com.example.reader.engine.ReaderParagraphStyleResolver
 import com.example.reader.engine.TextLineMeasurer
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -239,5 +244,72 @@ class ChapterPaginatorTest {
         assertEquals(page.pageIndexInChapter, resolvedPage)
       }
     }
+  }
+
+  @Test
+  fun `body paragraphs use first-line indent without vertical gap and omit indent on continuation slices`() {
+    val prefs = ReaderPreferences(fontSizeSp = 18f)
+    val firstSliceSpec = ReaderParagraphStyleResolver.resolve(
+      kind = ParagraphKind.BODY,
+      text = "Первый абзац текста.",
+      preferences = prefs,
+      isContinuationSlice = false,
+    )
+    assertTrue((firstSliceSpec.textStyle.textIndent?.firstLine ?: TextUnit.Unspecified).value > 20f)
+    assertEquals(0.dp, firstSliceSpec.extraTopPaddingDp)
+    assertEquals(0.dp, firstSliceSpec.extraBottomPaddingDp)
+
+    val continuationSpec = ReaderParagraphStyleResolver.resolve(
+      kind = ParagraphKind.BODY,
+      text = "Продолжение абзаца.",
+      preferences = prefs,
+      isContinuationSlice = true,
+    )
+    assertEquals(TextIndent.None, continuationSpec.textStyle.textIndent)
+
+    val headingSpec = ReaderParagraphStyleResolver.resolve(
+      kind = ParagraphKind.HEADING,
+      text = "Глава 1",
+      preferences = prefs,
+    )
+    assertTrue(headingSpec.textStyle.fontSize.value >= prefs.fontSizeSp + 8f)
+  }
+
+  @Test
+  fun `maxLineColumnWidthDp caps line width up to 65 characters across font sizes`() {
+    for (fontSize in listOf(14f, 18f, 24f, 28f)) {
+      val prefs = ReaderPreferences(fontOption = ReaderFontOption.LITERATA, fontSizeSp = fontSize)
+      val colWidthDp = ReaderParagraphStyleResolver.maxLineColumnWidthDp(prefs).value
+      val approxAvgCharDp = fontSize * 0.5f
+      val approxCharsPerLine = colWidthDp / approxAvgCharDp
+      assertTrue(
+        "Expected <= 65 chars per line at $fontSize sp, got $approxCharsPerLine",
+        approxCharsPerLine <= 65.5f,
+      )
+    }
+  }
+
+  @Test
+  fun `first page gets synthetic chapter header only when chapter has no leading HEADING`() = runTest {
+    val paginator = ChapterPaginator()
+    val measurer = FakeMeasuredTextLineMeasurer()
+    val density = Density(density = 1f, fontScale = 1f)
+    val prefs = ReaderPreferences(readingMode = ReaderReadingMode.PAGES)
+
+    val withoutLeadingHeading = BookChapter(
+      index = 0,
+      title = "Пролог",
+      paragraphs = (0 until 8).map { idx ->
+        BookParagraph(idx, "Длинный абзац номер $idx. " + "Текст для проверки разбиения. ".repeat(6), ParagraphKind.BODY)
+      },
+    )
+    val pagesSynthetic = paginator.paginateChapter(withoutLeadingHeading, prefs, 360, 420, density, measurer)
+    assertTrue(pagesSynthetic.size > 1)
+    assertTrue(pagesSynthetic.first().hasSyntheticChapterHeader)
+    assertFalse(pagesSynthetic[1].hasSyntheticChapterHeader)
+
+    val withLeadingHeading = sampleChapter()
+    val pagesExplicit = paginator.paginateChapter(withLeadingHeading, prefs, 360, 420, density, measurer)
+    assertFalse(pagesExplicit.first().hasSyntheticChapterHeader)
   }
 }

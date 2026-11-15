@@ -1,5 +1,6 @@
 package com.example.ui.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -16,6 +17,8 @@ import com.example.reader.engine.BookPage
 import com.example.reader.engine.BookSearchResult
 import com.example.reader.engine.LoadedBookContent
 import com.example.reader.engine.Locator
+import com.example.reader.tts.TtsPlaybackController
+import com.example.reader.tts.TtsPlaybackManager
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -53,6 +56,9 @@ class ReaderViewModel(
   private val bookRepository: BookRepository,
   private val preferencesRepository: PreferencesRepository,
 ) : ViewModel() {
+
+  val currentBookId: Long
+    get() = bookId
 
   private data class PendingProgress(
     val locator: Locator,
@@ -249,6 +255,33 @@ class ReaderViewModel(
     _currentLocator.value = targetLocator
     _progressPercent.value = progress
     scheduleProgressSave(state.content, targetLocator, progress)
+  }
+
+  fun syncFromTts(locator: Locator) {
+    val state = _loadState.value as? ReaderLoadState.Ready ?: return
+    val normalized = normalizeLocator(state.content, locator)
+    val progress = computeProgress(state.content, normalized)
+    if (normalized.chapterIndex != _currentUnitIndex.value) {
+      _currentPageRange.value = null
+      _currentUnitIndex.value = normalized.chapterIndex
+      _loadState.value = state.copy(
+        currentUnitIndex = normalized.chapterIndex,
+        initialLocator = normalized,
+      )
+    }
+    _currentLocator.value = normalized
+    _progressPercent.value = progress
+
+    val totalUnits = totalUnitsOf(state.content)
+    val totalChars = totalCharsOf(state.content)
+    val syncedPending = PendingProgress(
+      locator = normalized,
+      progressPercent = progress,
+      totalUnits = totalUnits,
+      totalChars = totalChars,
+    )
+    latestPending = syncedPending
+    lastPersistedPending = syncedPending
   }
 
   fun flushProgressNow() {
@@ -496,8 +529,16 @@ class ReaderViewModel(
   }
 
   fun setTtsSpeed(speed: Float) {
+    TtsPlaybackManager.peek()?.setSpeed(speed)
     viewModelScope.launch { preferencesRepository.updateTtsSpeed(speed) }
   }
+
+  fun markTtsNotificationPrompted() {
+    viewModelScope.launch { preferencesRepository.markTtsNotificationPrompted() }
+  }
+
+  fun ttsController(context: Context): TtsPlaybackController =
+    TtsPlaybackManager.getInstance(context, bookRepository)
 
   private fun scheduleProgressSave(
     content: LoadedBookContent,

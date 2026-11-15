@@ -9,6 +9,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -33,6 +38,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -59,11 +65,14 @@ import androidx.navigation.navArgument
 import com.example.data.local.AppDatabase
 import com.example.data.local.PreferencesRepository
 import com.example.data.repository.BookRepository
+import com.example.reader.tts.TtsPlaybackManager
+import com.example.reader.tts.TtsPlaybackService
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.QuotesScreen
 import com.example.ui.screens.ReaderScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.ListayTheme
+import com.example.ui.theme.LocalAnimationsEnabled
 import com.example.ui.viewmodel.LibraryEvent
 import com.example.ui.viewmodel.LibraryViewModel
 import com.example.ui.viewmodel.ReaderViewModel
@@ -82,11 +91,13 @@ class MainActivity : ComponentActivity() {
 
   private var volumeKeyHandler: ((Boolean) -> Boolean)? = null
   private var pendingExternalUri by mutableStateOf<Uri?>(null)
+  private var pendingTtsBookId by mutableStateOf<Long?>(null)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
     extractIncomingUri(intent)?.let { pendingExternalUri = it }
+    extractTtsBookId(intent)?.let { pendingTtsBookId = it }
 
     val database = AppDatabase.getInstance(applicationContext)
     val bookRepository = BookRepository(applicationContext, database)
@@ -108,6 +119,8 @@ class MainActivity : ComponentActivity() {
           preferencesRepository = preferencesRepository,
           pendingExternalUri = pendingExternalUri,
           onExternalUriConsumed = { pendingExternalUri = null },
+          pendingTtsBookId = pendingTtsBookId,
+          onTtsBookIdConsumed = { pendingTtsBookId = null },
           registerVolumeKeyHandler = { handler -> volumeKeyHandler = handler },
         )
       }
@@ -118,6 +131,14 @@ class MainActivity : ComponentActivity() {
     super.onNewIntent(intent)
     setIntent(intent)
     extractIncomingUri(intent)?.let { pendingExternalUri = it }
+    extractTtsBookId(intent)?.let { pendingTtsBookId = it }
+  }
+
+  override fun onDestroy() {
+    if (isFinishing && TtsPlaybackManager.peek()?.state?.value?.isActive != true) {
+      TtsPlaybackManager.peek()?.release()
+    }
+    super.onDestroy()
   }
 
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -142,6 +163,11 @@ class MainActivity : ComponentActivity() {
     }
     return null
   }
+
+  private fun extractTtsBookId(intent: Intent?): Long? {
+    val id = intent?.getLongExtra(TtsPlaybackService.EXTRA_BOOK_ID, -1L) ?: -1L
+    return id.takeIf { it > 0L }
+  }
 }
 
 @Composable
@@ -151,6 +177,8 @@ private fun ListayApp(
   preferencesRepository: PreferencesRepository,
   pendingExternalUri: Uri?,
   onExternalUriConsumed: () -> Unit,
+  pendingTtsBookId: Long?,
+  onTtsBookIdConsumed: () -> Unit,
   registerVolumeKeyHandler: (((Boolean) -> Boolean)?) -> Unit,
 ) {
   val navController = rememberNavController()
@@ -187,6 +215,21 @@ private fun ListayApp(
     if (pendingExternalUri != null) {
       libraryViewModel.importBook(pendingExternalUri, openImmediately = true)
       onExternalUriConsumed()
+    }
+  }
+
+  LaunchedEffect(pendingTtsBookId) {
+    val targetBookId = pendingTtsBookId
+    if (targetBookId != null && targetBookId > 0L) {
+      val currentEntry = navController.currentBackStackEntry
+      val alreadyReadingSame = currentEntry?.destination?.route == Routes.READER &&
+        currentEntry.arguments?.getLong("bookId") == targetBookId
+      if (!alreadyReadingSame) {
+        navController.navigate(Routes.readerRoute(targetBookId)) {
+          launchSingleTop = true
+        }
+      }
+      onTtsBookIdConsumed()
     }
   }
 
@@ -239,7 +282,16 @@ private fun ListayApp(
     Scaffold(
       containerColor = MaterialTheme.colorScheme.background,
       contentWindowInsets = if (showMainTabs) ScaffoldDefaults.contentWindowInsets else WindowInsets(0, 0, 0, 0),
-      snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+      snackbarHost = {
+        SnackbarHost(hostState = snackbarHostState) { data ->
+          Snackbar(
+            snackbarData = data,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            actionColor = MaterialTheme.colorScheme.primary,
+          )
+        }
+      },
       bottomBar = {
         if (showMainTabs && !useNavigationRail) {
           NavigationBar(
@@ -385,83 +437,101 @@ private fun ListayApp(
           }
         }
 
-        NavHost(
-          navController = navController,
-          startDestination = Routes.LIBRARY,
-          modifier = if (showMainTabs) {
-            Modifier
-              .weight(1f)
-              .padding(innerPadding)
-              .consumeWindowInsets(innerPadding)
-          } else {
-            Modifier.weight(1f)
-          },
-        ) {
-          composable(Routes.LIBRARY) {
-            LibraryScreen(
-              uiState = libraryState,
-              onSearchQueryChanged = libraryViewModel::onSearchQueryChanged,
-              onFormatSelected = libraryViewModel::onFormatFilterSelected,
-              onImportBookClick = openPicker,
-              onOpenBook = { bookId ->
-                navController.navigate(Routes.readerRoute(bookId))
-              },
-              onDeleteBook = libraryViewModel::deleteBook,
-            )
-          }
+        @OptIn(ExperimentalSharedTransitionApi::class)
+        run {
+          val animationsEnabled = LocalAnimationsEnabled.current
+          val navDurationMs = if (animationsEnabled) 220 else 0
+          SharedTransitionLayout(
+            modifier = if (showMainTabs) {
+              Modifier
+                .weight(1f)
+                .padding(innerPadding)
+                .consumeWindowInsets(innerPadding)
+            } else {
+              Modifier.weight(1f)
+            },
+          ) {
+            NavHost(
+              navController = navController,
+              startDestination = Routes.LIBRARY,
+              enterTransition = { fadeIn(tween(navDurationMs)) },
+              exitTransition = { fadeOut(tween(navDurationMs)) },
+              popEnterTransition = { fadeIn(tween(navDurationMs)) },
+              popExitTransition = { fadeOut(tween(navDurationMs)) },
+              modifier = Modifier.fillMaxSize(),
+            ) {
+              composable(Routes.LIBRARY) {
+                LibraryScreen(
+                  uiState = libraryState,
+                  onSearchQueryChanged = libraryViewModel::onSearchQueryChanged,
+                  onFormatSelected = libraryViewModel::onFormatFilterSelected,
+                  onImportBookClick = openPicker,
+                  onOpenBook = { bookId ->
+                    navController.navigate(Routes.readerRoute(bookId))
+                  },
+                  onDeleteBook = libraryViewModel::deleteBook,
+                  sharedTransitionScope = this@SharedTransitionLayout,
+                  animatedVisibilityScope = this@composable,
+                )
+              }
 
-          composable(Routes.QUOTES) {
-            QuotesScreen(
-              quotes = allQuotes,
-              onOpenQuoteInBook = { bookId, unitIdx, paraIdx, charOff ->
-                navController.navigate(Routes.readerRoute(bookId, unitIdx, paraIdx, charOff))
-              },
-              onDeleteQuote = libraryViewModel::deleteQuote,
-            )
-          }
+              composable(Routes.QUOTES) {
+                QuotesScreen(
+                  quotes = allQuotes,
+                  onOpenQuoteInBook = { bookId, unitIdx, paraIdx, charOff ->
+                    navController.navigate(Routes.readerRoute(bookId, unitIdx, paraIdx, charOff))
+                  },
+                  onDeleteQuote = libraryViewModel::deleteQuote,
+                )
+              }
 
-          composable(Routes.SETTINGS) {
-            SettingsScreen(
-              preferences = preferences,
-              bookCount = libraryState.books.size,
-              quoteCount = allQuotes.size,
-              onSelectTheme = libraryViewModel::setReaderTheme,
-              onSelectReadingMode = libraryViewModel::setReadingMode,
-              onToggleDynamicColor = libraryViewModel::setUseDynamicColor,
-              onToggleVolumePaging = libraryViewModel::setVolumeKeyNavigation,
-              onToggleKeepScreenOn = libraryViewModel::setKeepScreenOn,
-            )
-          }
+              composable(Routes.SETTINGS) {
+                SettingsScreen(
+                  preferences = preferences,
+                  bookCount = libraryState.books.size,
+                  quoteCount = allQuotes.size,
+                  onSelectTheme = libraryViewModel::setReaderTheme,
+                  onSelectReadingMode = libraryViewModel::setReadingMode,
+                  onToggleDynamicColor = libraryViewModel::setUseDynamicColor,
+                  onToggleVolumePaging = libraryViewModel::setVolumeKeyNavigation,
+                  onToggleKeepScreenOn = libraryViewModel::setKeepScreenOn,
+                  onTtsSpeedChanged = libraryViewModel::setTtsSpeed,
+                )
+              }
 
-          composable(
-            route = Routes.READER,
-            arguments = listOf(
-              navArgument("bookId") { type = NavType.LongType },
-              navArgument("unit") { type = NavType.IntType; defaultValue = -1 },
-              navArgument("para") { type = NavType.IntType; defaultValue = -1 },
-              navArgument("char") { type = NavType.IntType; defaultValue = -1 },
-            ),
-          ) { entry ->
-            val bookId = entry.arguments?.getLong("bookId") ?: 0L
-            val unitArg = entry.arguments?.getInt("unit")?.takeIf { it >= 0 }
-            val paraArg = entry.arguments?.getInt("para")?.takeIf { it >= 0 }
-            val charArg = entry.arguments?.getInt("char")?.takeIf { it >= 0 }
-            val readerViewModel: ReaderViewModel = viewModel(
-              key = "reader_${bookId}_${unitArg ?: -1}_${paraArg ?: -1}_${charArg ?: -1}",
-              factory = ReaderViewModel.Factory(
-                bookId = bookId,
-                initialUnitOverride = unitArg,
-                initialParagraphOverride = paraArg,
-                initialCharOffsetOverride = charArg,
-                bookRepository = bookRepository,
-                preferencesRepository = preferencesRepository,
-              ),
-            )
-            ReaderScreen(
-              viewModel = readerViewModel,
-              onNavigateBack = { navController.popBackStack() },
-              registerVolumeKeyHandler = registerVolumeKeyHandler,
-            )
+              composable(
+                route = Routes.READER,
+                arguments = listOf(
+                  navArgument("bookId") { type = NavType.LongType },
+                  navArgument("unit") { type = NavType.IntType; defaultValue = -1 },
+                  navArgument("para") { type = NavType.IntType; defaultValue = -1 },
+                  navArgument("char") { type = NavType.IntType; defaultValue = -1 },
+                ),
+              ) { entry ->
+                val bookId = entry.arguments?.getLong("bookId") ?: 0L
+                val unitArg = entry.arguments?.getInt("unit")?.takeIf { it >= 0 }
+                val paraArg = entry.arguments?.getInt("para")?.takeIf { it >= 0 }
+                val charArg = entry.arguments?.getInt("char")?.takeIf { it >= 0 }
+                val readerViewModel: ReaderViewModel = viewModel(
+                  key = "reader_${bookId}_${unitArg ?: -1}_${paraArg ?: -1}_${charArg ?: -1}",
+                  factory = ReaderViewModel.Factory(
+                    bookId = bookId,
+                    initialUnitOverride = unitArg,
+                    initialParagraphOverride = paraArg,
+                    initialCharOffsetOverride = charArg,
+                    bookRepository = bookRepository,
+                    preferencesRepository = preferencesRepository,
+                  ),
+                )
+                ReaderScreen(
+                  viewModel = readerViewModel,
+                  onNavigateBack = { navController.popBackStack() },
+                  registerVolumeKeyHandler = registerVolumeKeyHandler,
+                  sharedTransitionScope = this@SharedTransitionLayout,
+                  animatedVisibilityScope = this@composable,
+                )
+              }
+            }
           }
         }
       }

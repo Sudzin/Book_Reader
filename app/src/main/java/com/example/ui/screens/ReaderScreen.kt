@@ -1,13 +1,36 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.os.Build
+import android.view.HapticFeedbackConstants
 import android.view.WindowManager
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -20,10 +43,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -51,6 +76,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -60,8 +87,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -81,6 +107,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
@@ -92,17 +119,14 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.intl.LocaleList
-import androidx.compose.ui.text.style.Hyphens
-import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -116,21 +140,65 @@ import com.example.reader.engine.LoadedBookContent
 import com.example.reader.engine.Locator
 import com.example.reader.engine.ParagraphKind
 import com.example.reader.engine.PdfParser
-import com.example.reader.engine.TtsController
-import com.example.ui.theme.JetBrainsMonoFontFamily
+import com.example.reader.engine.ReaderParagraphStyleResolver
+import com.example.ui.components.ThemedThinSlider
+import com.example.ui.components.inactiveTrackColor
+import com.example.ui.theme.AnimatedReaderColors
+import com.example.ui.theme.ListayTheme
+import com.example.ui.theme.LocalAnimationsEnabled
+import com.example.ui.theme.rememberAnimatedReaderColors
+import com.example.ui.theme.rememberSystemAnimationsEnabled
 import com.example.ui.viewmodel.ReaderLoadState
 import com.example.ui.viewmodel.ReaderViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun ReaderScreen(
   viewModel: ReaderViewModel,
   onNavigateBack: () -> Unit,
   registerVolumeKeyHandler: (((Boolean) -> Boolean)?) -> Unit,
+) {
+  ReaderScreenWithSharedTransition(
+    viewModel = viewModel,
+    onNavigateBack = onNavigateBack,
+    registerVolumeKeyHandler = registerVolumeKeyHandler,
+    sharedTransitionScope = null,
+    animatedVisibilityScope = null,
+  )
+}
+
+@Composable
+@OptIn(ExperimentalSharedTransitionApi::class)
+fun ReaderScreen(
+  viewModel: ReaderViewModel,
+  onNavigateBack: () -> Unit,
+  registerVolumeKeyHandler: (((Boolean) -> Boolean)?) -> Unit,
+  sharedTransitionScope: SharedTransitionScope?,
+  animatedVisibilityScope: AnimatedVisibilityScope?,
+) {
+  ReaderScreenWithSharedTransition(
+    viewModel = viewModel,
+    onNavigateBack = onNavigateBack,
+    registerVolumeKeyHandler = registerVolumeKeyHandler,
+    sharedTransitionScope = sharedTransitionScope,
+    animatedVisibilityScope = animatedVisibilityScope,
+  )
+}
+
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+private fun ReaderScreenWithSharedTransition(
+  viewModel: ReaderViewModel,
+  onNavigateBack: () -> Unit,
+  registerVolumeKeyHandler: (((Boolean) -> Boolean)?) -> Unit,
+  sharedTransitionScope: SharedTransitionScope?,
+  animatedVisibilityScope: AnimatedVisibilityScope?,
 ) {
   val loadState by viewModel.loadState.collectAsStateWithLifecycle()
   val preferences by viewModel.preferences.collectAsStateWithLifecycle()
@@ -144,19 +212,70 @@ fun ReaderScreen(
   val isSearching by viewModel.isSearching.collectAsStateWithLifecycle()
 
   val context = LocalContext.current
+  val view = LocalView.current
   val lifecycleOwner = LocalLifecycleOwner.current
   val haptics = LocalHapticFeedback.current
   val coroutineScope = rememberCoroutineScope()
   val snackbarHostState = remember { SnackbarHostState() }
+  val animationsEnabled = LocalAnimationsEnabled.current && rememberSystemAnimationsEnabled()
 
   var barsVisible by remember { mutableStateOf(true) }
+  var barsBackProgress by remember { mutableFloatStateOf(0f) }
+  val animatedBarsBackProgress by animateFloatAsState(
+    targetValue = barsBackProgress,
+    animationSpec = if (animationsEnabled) spring() else snap(),
+    label = "reader_bars_back_progress",
+  )
   var showAppearanceSheet by remember { mutableStateOf(false) }
   var showNavSheet by remember { mutableStateOf(false) }
   var showSearchSheet by remember { mutableStateOf(false) }
   var selectedParagraphForQuote by remember { mutableStateOf<Pair<String, BookParagraph>?>(null) }
 
-  val ttsController = remember(context) { TtsController(context) }
+  val isContentReady = loadState is ReaderLoadState.Ready
+  val anyOverlayOpen = showAppearanceSheet ||
+    showNavSheet ||
+    showSearchSheet ||
+    selectedParagraphForQuote != null
+
+  PredictiveBackHandler(enabled = isContentReady && barsVisible && !anyOverlayOpen) { progress ->
+    try {
+      progress.collect { backEvent ->
+        barsBackProgress = backEvent.progress.coerceIn(0f, 1f)
+      }
+      barsBackProgress = 0f
+      barsVisible = false
+    } catch (e: CancellationException) {
+      barsBackProgress = 0f
+      throw e
+    }
+  }
+
+  val ttsController = remember(context, viewModel) { viewModel.ttsController(context) }
   val ttsState by ttsController.state.collectAsStateWithLifecycle()
+
+  var pendingTtsStartParagraph by remember { mutableStateOf<Int?>(null) }
+  val notificationPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission(),
+  ) { granted ->
+    val startPara = pendingTtsStartParagraph
+    pendingTtsStartParagraph = null
+    if (!granted) {
+      coroutineScope.launch {
+        snackbarHostState.showSnackbar("Уведомления отключены — управление озвучкой остаётся в приложении")
+      }
+    }
+    val readyState = loadState as? ReaderLoadState.Ready
+    val readyContent = readyState?.content as? LoadedBookContent.Reflowable
+    if (startPara != null && readyState != null && readyContent != null) {
+      ttsController.startBookPlayback(
+        book = readyState.book,
+        content = readyContent,
+        startChapterIndex = readyState.currentUnitIndex,
+        startParagraphIndex = startPara,
+        speechSpeed = preferences.ttsSpeed,
+      )
+    }
+  }
 
   DisposableEffect(lifecycleOwner, viewModel) {
     val observer = LifecycleEventObserver { _, event ->
@@ -169,10 +288,6 @@ fun ReaderScreen(
       lifecycleOwner.lifecycle.removeObserver(observer)
       viewModel.flushProgressNow()
     }
-  }
-
-  DisposableEffect(Unit) {
-    onDispose { ttsController.release() }
   }
 
   DisposableEffect(preferences.keepScreenOn) {
@@ -193,54 +308,133 @@ fun ReaderScreen(
     }
   }
 
-  val theme = preferences.readerTheme
+  val themeMode = preferences.readerTheme
 
-  Box(
-    modifier = Modifier
-      .fillMaxSize()
-      .background(theme.background),
+  ListayTheme(
+    readerTheme = themeMode,
+    dynamicColor = false,
+    animationsEnabled = animationsEnabled,
   ) {
-    when (val state = loadState) {
-      is ReaderLoadState.Loading -> {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-          Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator(color = theme.accent)
-            Spacer(modifier = Modifier.height(12.dp))
-            Text("Открываем книгу...", color = theme.mutedText)
-          }
-        }
+    val theme = rememberAnimatedReaderColors(themeMode, animationsEnabled)
+    val barsDurationMs = if (animationsEnabled) 200 else 0
+    val sharedContainerModifier = if (animationsEnabled && sharedTransitionScope != null && animatedVisibilityScope != null) {
+      with(sharedTransitionScope) {
+        Modifier.sharedBounds(
+          sharedContentState = rememberSharedContentState(key = "book_cover_${viewModel.currentBookId}"),
+          animatedVisibilityScope = animatedVisibilityScope,
+          boundsTransform = { _, _ -> tween(durationMillis = 280, easing = FastOutSlowInEasing) },
+          resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds(),
+        )
       }
+    } else {
+      Modifier
+    }
 
-      is ReaderLoadState.Error -> {
-        Box(
-          modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(24.dp),
-          contentAlignment = Alignment.Center,
-        ) {
-          Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-              text = state.message,
-              style = MaterialTheme.typography.titleMedium,
-              color = theme.text,
-              textAlign = TextAlign.Center,
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = onNavigateBack) {
-              Text("Вернуться на полку")
+    Box(
+      modifier = Modifier
+        .fillMaxSize()
+        .then(sharedContainerModifier)
+        .background(theme.background)
+        .testTag("reader_root_container"),
+    ) {
+      when (val state = loadState) {
+        is ReaderLoadState.Loading -> {
+          Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+              CircularProgressIndicator(color = theme.accent)
+              Spacer(modifier = Modifier.height(12.dp))
+              Text("Открываем книгу...", color = theme.mutedText)
             }
           }
         }
-      }
+
+        is ReaderLoadState.Error -> {
+          Box(
+            modifier = Modifier
+              .fillMaxSize()
+              .windowInsetsPadding(WindowInsets.safeDrawing)
+              .padding(24.dp),
+            contentAlignment = Alignment.Center,
+          ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+              Text(
+                text = state.message,
+                style = MaterialTheme.typography.titleMedium,
+                color = theme.text,
+                textAlign = TextAlign.Center,
+              )
+              Spacer(modifier = Modifier.height(16.dp))
+              Button(
+                onClick = onNavigateBack,
+                colors = ButtonDefaults.buttonColors(
+                  containerColor = theme.accent,
+                  contentColor = theme.onAccent,
+                ),
+              ) {
+                Text("Вернуться на полку")
+              }
+            }
+          }
+        }
 
       is ReaderLoadState.Ready -> {
         val content = state.content
         val unitIdx = state.currentUnitIndex
+        val ttsForBook = ttsState.takeIf { it.isActive && it.bookId == state.book.id }
         val paginator = remember(state.book.id) { ChapterPaginator(maxCachedChapters = 64) }
         val pageNavHandle = remember(state.book.id) { PageNavigationHandle() }
         val isPagesMode = content is LoadedBookContent.Reflowable &&
           preferences.readingMode == ReaderReadingMode.PAGES
+
+        LaunchedEffect(
+          ttsForBook?.isActive,
+          ttsForBook?.chapterIndex,
+          ttsForBook?.activeParagraphIndex,
+        ) {
+          val active = ttsForBook ?: return@LaunchedEffect
+          if (active.activeParagraphIndex >= 0) {
+            viewModel.syncFromTts(
+              Locator(
+                chapterIndex = active.chapterIndex,
+                paragraphIndex = active.activeParagraphIndex,
+                charOffset = 0,
+              )
+            )
+          }
+        }
+
+        LaunchedEffect(ttsForBook?.errorMessage) {
+          val err = ttsForBook?.errorMessage
+          if (!err.isNullOrBlank()) {
+            snackbarHostState.showSnackbar(err)
+          }
+        }
+
+        val launchTtsFromCurrent: () -> Unit = {
+          val reflowable = content as? LoadedBookContent.Reflowable
+          if (reflowable != null) {
+            val startPara = currentLocator.paragraphIndex.coerceAtLeast(0)
+            val needsPermissionPrompt = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+              ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+              ) != PackageManager.PERMISSION_GRANTED &&
+              !preferences.ttsNotificationPrompted
+            if (needsPermissionPrompt) {
+              pendingTtsStartParagraph = startPara
+              viewModel.markTtsNotificationPrompted()
+              notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+              ttsController.startBookPlayback(
+                book = state.book,
+                content = reflowable,
+                startChapterIndex = unitIdx,
+                startParagraphIndex = startPara,
+                speechSpeed = preferences.ttsSpeed,
+              )
+            }
+          }
+        }
 
         when (content) {
           is LoadedBookContent.Reflowable -> {
@@ -248,6 +442,9 @@ fun ReaderScreen(
             val chapterQuotedParagraphs = remember(quotes, unitIdx) {
               quotes.filter { it.locator.chapterIndex == unitIdx }.map { it.locator.paragraphIndex }.toSet()
             }
+            val activeTtsParagraphInChapter = ttsForBook
+              ?.takeIf { it.chapterIndex == unitIdx && it.activeParagraphIndex >= 0 }
+              ?.activeParagraphIndex
 
             if (preferences.readingMode == ReaderReadingMode.PAGES) {
               DisposableEffect(preferences.volumeKeyNavigation, unitIdx, content.chapters.size) {
@@ -270,7 +467,7 @@ fun ReaderScreen(
                 currentLocatorProvider = { viewModel.currentLocator.value },
                 preferences = preferences,
                 quotedParagraphIndices = chapterQuotedParagraphs,
-                ttsActiveParagraphIndex = if (ttsState.isSpeaking) ttsState.activeParagraphIndex else null,
+                ttsActiveParagraphIndex = activeTtsParagraphInChapter,
                 paginator = paginator,
                 pageNavHandle = pageNavHandle,
                 onPageChanged = { page, isLastPageOfBook ->
@@ -310,6 +507,17 @@ fun ReaderScreen(
                     if (pxOffset > 0) {
                       listState.scrollToItem(targetIdx, pxOffset)
                     }
+                  }
+                }
+              }
+
+              LaunchedEffect(activeTtsParagraphInChapter, chapter) {
+                val paraIdx = activeTtsParagraphInChapter ?: return@LaunchedEffect
+                val itemIdx = chapter.paragraphs.indexOfFirst { it.index == paraIdx }
+                if (itemIdx >= 0) {
+                  val isVisible = listState.layoutInfo.visibleItemsInfo.any { it.index == itemIdx }
+                  if (!isVisible) {
+                    listState.animateScrollToItem(itemIdx)
                   }
                 }
               }
@@ -377,6 +585,11 @@ fun ReaderScreen(
                 onDispose { registerVolumeKeyHandler(null) }
               }
 
+              val needsSyntheticHeader = chapter.title.isNotBlank() &&
+                chapter.paragraphs.firstOrNull()?.kind != ParagraphKind.HEADING
+              val maxTextColumnDp = ReaderParagraphStyleResolver.maxLineColumnWidthDp(preferences)
+              val maxContentWidthDp = maxTextColumnDp + (preferences.horizontalMarginDp * 2).dp
+
               Box(
                 modifier = Modifier
                   .fillMaxSize()
@@ -390,34 +603,54 @@ fun ReaderScreen(
                   state = listState,
                   modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 680.dp),
+                    .widthIn(max = maxContentWidthDp),
                   contentPadding = PaddingValues(
                     start = preferences.horizontalMarginDp.dp,
                     end = preferences.horizontalMarginDp.dp,
                     top = 92.dp,
                     bottom = 112.dp,
                   ),
-                  verticalArrangement = Arrangement.spacedBy(12.dp),
+                  verticalArrangement = Arrangement.spacedBy(0.dp),
                 ) {
+                  if (chapter.paragraphs.isEmpty() && needsSyntheticHeader) {
+                    item(key = "chapter_empty_header_$unitIdx") {
+                      ChapterHeroHeading(
+                        title = chapter.title,
+                        preferences = preferences,
+                        theme = theme,
+                      )
+                    }
+                  }
+
                   items(
                     items = chapter.paragraphs,
                     key = { "${unitIdx}_${it.index}" },
                   ) { paragraph ->
                     val isQuoted = chapterQuotedParagraphs.contains(paragraph.index)
-                    val isTtsActive = ttsState.isSpeaking && ttsState.activeParagraphIndex == paragraph.index
-                    ParagraphView(
-                      paragraph = paragraph,
-                      preferences = preferences,
-                      isQuoted = isQuoted,
-                      isTtsActive = isTtsActive,
-                      onToggleBars = { barsVisible = !barsVisible },
-                      onLongClickParagraph = {
-                        if (paragraph.text.length > 8) {
-                          haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                          selectedParagraphForQuote = chapter.title to paragraph
-                        }
-                      },
-                    )
+                    val isTtsActive = activeTtsParagraphInChapter == paragraph.index
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                      if (needsSyntheticHeader && paragraph.index == 0) {
+                        ChapterHeroHeading(
+                          title = chapter.title,
+                          preferences = preferences,
+                          theme = theme,
+                        )
+                      }
+                      ParagraphView(
+                        paragraph = paragraph,
+                        preferences = preferences,
+                        theme = theme,
+                        isQuoted = isQuoted,
+                        isTtsActive = isTtsActive,
+                        onToggleBars = { barsVisible = !barsVisible },
+                        onLongClickParagraph = {
+                          if (paragraph.text.length > 8) {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            selectedParagraphForQuote = chapter.title to paragraph
+                          }
+                        },
+                      )
+                    }
                   }
 
                   item(key = "chapter_footer_$unitIdx") {
@@ -425,17 +658,22 @@ fun ReaderScreen(
                       hasPrevious = unitIdx > 0,
                       hasNext = unitIdx + 1 < content.chapters.size,
                       textColor = theme.text,
+                      outlineColor = theme.outline,
                       accentColor = theme.accent,
                       onAccentColor = theme.onAccent,
                       onPrevious = {
-                        ttsController.stop()
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         viewModel.previousUnit()
+                        if (ttsForBook != null) {
+                          ttsController.seekTo((unitIdx - 1).coerceAtLeast(0), 0)
+                        }
                       },
                       onNext = {
-                        ttsController.stop()
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         viewModel.nextUnit()
+                        if (ttsForBook != null) {
+                          ttsController.seekTo((unitIdx + 1).coerceAtMost(content.chapters.lastIndex), 0)
+                        }
                       },
                     )
                   }
@@ -461,6 +699,8 @@ fun ReaderScreen(
               filePath = content.filePath,
               pageIndex = unitIdx,
               invertForNight = theme.isDark,
+              accentColor = theme.accent,
+              mutedColor = theme.mutedText,
               onToggleBars = { barsVisible = !barsVisible },
             )
           }
@@ -484,16 +724,49 @@ fun ReaderScreen(
           is LoadedBookContent.PdfDocumentContent -> "Страница ${unitIdx + 1} из $totalUnits"
         }
 
+        val bookmarkScale = remember { Animatable(1f) }
+        var prevBookmarked by remember { mutableStateOf(isBookmarked) }
+        LaunchedEffect(isBookmarked, animationsEnabled) {
+          if (isBookmarked != prevBookmarked) {
+            prevBookmarked = isBookmarked
+            if (animationsEnabled) {
+              bookmarkScale.snapTo(1f)
+              bookmarkScale.animateTo(
+                targetValue = 1.28f,
+                animationSpec = tween(durationMillis = 110, easing = FastOutSlowInEasing),
+              )
+              bookmarkScale.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(dampingRatio = 0.45f, stiffness = 420f),
+              )
+            } else {
+              bookmarkScale.snapTo(1f)
+            }
+          }
+        }
+        val bookmarkTint by animateColorAsState(
+          targetValue = if (isBookmarked) theme.accent else theme.text,
+          animationSpec = tween(durationMillis = if (animationsEnabled) 200 else 0),
+          label = "reader_bookmark_tint",
+        )
+
         AnimatedVisibility(
           visible = barsVisible,
-          enter = fadeIn() + slideInVertically { -it },
-          exit = fadeOut() + slideOutVertically { -it },
+          enter = fadeIn(tween(barsDurationMs)) +
+            slideInVertically(tween(barsDurationMs, easing = FastOutSlowInEasing)) { -it },
+          exit = fadeOut(tween(barsDurationMs)) +
+            slideOutVertically(tween(barsDurationMs, easing = FastOutSlowInEasing)) { -it },
           modifier = Modifier.align(Alignment.TopCenter),
         ) {
           Surface(
             color = theme.surface,
             tonalElevation = 0.dp,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+              .fillMaxWidth()
+              .graphicsLayer {
+                alpha = 1f - animatedBarsBackProgress * 0.45f
+                translationY = -animatedBarsBackProgress * 28f
+              },
           ) {
             Column(modifier = Modifier.fillMaxWidth()) {
               Row(
@@ -505,7 +778,6 @@ fun ReaderScreen(
               ) {
                 IconButton(
                   onClick = {
-                    ttsController.stop()
                     viewModel.flushProgressNow()
                     onNavigateBack()
                   },
@@ -547,46 +819,60 @@ fun ReaderScreen(
                     )
                   }
 
-                  val chapter = content.chapters.getOrNull(unitIdx)
                   IconButton(
                     onClick = {
-                      if (ttsState.isSpeaking) {
-                        ttsController.stop()
-                      } else if (chapter != null) {
-                        ttsController.startSpeaking(
-                          chapterParagraphs = chapter.paragraphs,
-                          startFromParagraphIndex = currentLocator.paragraphIndex.coerceAtLeast(0),
-                          speechSpeed = preferences.ttsSpeed,
-                          onFinished = {
-                            if (unitIdx + 1 < content.chapters.size) {
-                              viewModel.nextUnit()
-                            }
-                          },
-                        )
+                      if (ttsForBook != null) {
+                        ttsController.togglePlayPause()
+                      } else {
+                        launchTtsFromCurrent()
                       }
                     },
                     modifier = Modifier.testTag("reader_tts_button"),
                   ) {
                     Icon(
-                      imageVector = if (ttsState.isSpeaking) Icons.Default.Pause else Icons.Default.RecordVoiceOver,
+                      imageVector = when {
+                        ttsForBook?.isPlaying == true -> Icons.Default.Pause
+                        ttsForBook?.isPaused == true -> Icons.Default.PlayArrow
+                        else -> Icons.Default.RecordVoiceOver
+                      },
                       contentDescription = stringResource(R.string.cd_tts),
-                      tint = if (ttsState.isSpeaking) theme.accent else theme.text,
+                      tint = if (ttsForBook != null) theme.accent else theme.text,
                     )
                   }
                 }
 
                 IconButton(
                   onClick = {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    val performed = view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    if (!performed) {
+                      haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
                     viewModel.toggleBookmarkForCurrentUnit()
                   },
                   modifier = Modifier.testTag("reader_bookmark_button"),
                 ) {
-                  Icon(
-                    imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                    contentDescription = stringResource(R.string.cd_bookmark),
-                    tint = if (isBookmarked) theme.accent else theme.text,
-                  )
+                  AnimatedContent(
+                    targetState = isBookmarked,
+                    transitionSpec = {
+                      if (animationsEnabled) {
+                        (fadeIn(tween(150)) + scaleIn(initialScale = 0.72f, animationSpec = tween(180))) togetherWith
+                          (fadeOut(tween(120)) + scaleOut(targetScale = 0.72f, animationSpec = tween(120)))
+                      } else {
+                        fadeIn(tween(0)) togetherWith fadeOut(tween(0))
+                      }
+                    },
+                    label = "reader_bookmark_icon",
+                  ) { bookmarked ->
+                    Icon(
+                      imageVector = if (bookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                      contentDescription = stringResource(R.string.cd_bookmark),
+                      tint = bookmarkTint,
+                      modifier = Modifier.graphicsLayer {
+                        scaleX = bookmarkScale.value
+                        scaleY = bookmarkScale.value
+                      },
+                    )
+                  }
                 }
 
                 IconButton(
@@ -611,25 +897,64 @@ fun ReaderScreen(
                   )
                 }
               }
-              HorizontalDivider(color = theme.outline.copy(alpha = 0.5f))
+              HorizontalDivider(
+                thickness = 0.5.dp,
+                color = theme.mutedText.copy(alpha = 0.28f),
+              )
+            }
+          }
+        }
+
+        val animatedProgress by animateFloatAsState(
+          targetValue = progressPercent.coerceIn(0f, 1f),
+          animationSpec = if (animationsEnabled) spring() else snap(),
+          label = "reader_hidden_progress",
+        )
+
+        AnimatedVisibility(
+          visible = !barsVisible,
+          enter = fadeIn(tween(barsDurationMs)),
+          exit = fadeOut(tween(barsDurationMs)),
+          modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .navigationBarsPadding(),
+        ) {
+          val trackBg = theme.inactiveTrackColor(theme.background)
+          Canvas(
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(2.dp)
+              .testTag("reader_hidden_progress_line"),
+          ) {
+            drawRect(color = trackBg)
+            val activeWidth = size.width * animatedProgress
+            if (activeWidth > 0f) {
+              drawRect(
+                color = theme.accent,
+                size = Size(activeWidth, size.height),
+              )
             }
           }
         }
 
         AnimatedVisibility(
-          visible = ttsState.isSpeaking && !barsVisible,
-          enter = fadeIn(),
-          exit = fadeOut(),
+          visible = ttsForBook != null && !barsVisible,
+          enter = fadeIn(tween(barsDurationMs)),
+          exit = fadeOut(tween(barsDurationMs)),
           modifier = Modifier
             .align(Alignment.BottomCenter)
             .navigationBarsPadding()
             .padding(bottom = 16.dp),
         ) {
           TtsMiniPill(
+            isPlaying = ttsForBook?.isPlaying == true,
             speed = preferences.ttsSpeed,
             surfaceColor = theme.surface,
             textColor = theme.text,
             accentColor = theme.accent,
+            onPrevParagraph = { ttsController.previousParagraph() },
+            onTogglePlayPause = { ttsController.togglePlayPause() },
+            onNextParagraph = { ttsController.nextParagraph() },
             onSpeedStep = {
               val nextSpeed = when {
                 preferences.ttsSpeed < 1.15f -> 1.25f
@@ -645,141 +970,192 @@ fun ReaderScreen(
 
         AnimatedVisibility(
           visible = barsVisible,
-          enter = fadeIn() + slideInVertically { it },
-          exit = fadeOut() + slideOutVertically { it },
+          enter = fadeIn(tween(barsDurationMs)) +
+            slideInVertically(tween(barsDurationMs, easing = FastOutSlowInEasing)) { it },
+          exit = fadeOut(tween(barsDurationMs)) +
+            slideOutVertically(tween(barsDurationMs, easing = FastOutSlowInEasing)) { it },
           modifier = Modifier.align(Alignment.BottomCenter),
         ) {
+          val inactiveBarTrackColor = theme.inactiveTrackColor(theme.surface)
+          val pct = (progressPercent * 100f).roundToInt().coerceIn(0, 100)
+          val bottomChapterPageText = when (content) {
+            is LoadedBookContent.Reflowable -> {
+              val chTitle = content.chapters.getOrNull(unitIdx)?.title?.takeIf { it.isNotBlank() }
+                ?: "Глава ${unitIdx + 1}"
+              if (isPagesMode && pageNavHandle.totalPagesInChapter > 0) {
+                "$chTitle • стр. ${pageNavHandle.currentPageInChapter + 1}/${pageNavHandle.totalPagesInChapter}"
+              } else {
+                "$chTitle • гл. ${unitIdx + 1}/$totalUnits"
+              }
+            }
+            is LoadedBookContent.PdfDocumentContent -> "Стр. ${unitIdx + 1}/$totalUnits"
+          }
+
           Surface(
             color = theme.surface,
             tonalElevation = 0.dp,
-            modifier = Modifier.fillMaxWidth(),
+            shadowElevation = 0.dp,
+            modifier = Modifier
+              .fillMaxWidth()
+              .graphicsLayer {
+                alpha = 1f - animatedBarsBackProgress * 0.45f
+                translationY = animatedBarsBackProgress * 28f
+              }
+              .testTag("reader_bottom_bar")
+              .pointerInput(Unit) {
+                detectTapGestures { }
+              },
           ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-              HorizontalDivider(color = theme.outline.copy(alpha = 0.5f))
+              HorizontalDivider(
+                thickness = 0.5.dp,
+                color = theme.mutedText.copy(alpha = 0.28f),
+              )
               Column(
                 modifier = Modifier
                   .fillMaxWidth()
                   .navigationBarsPadding()
-                  .padding(horizontal = 16.dp, vertical = 10.dp),
+                  .padding(horizontal = 16.dp, vertical = 8.dp),
               ) {
-                if (ttsState.isSpeaking) {
+                if (ttsForBook != null) {
                   Row(
                     modifier = Modifier
                       .fillMaxWidth()
-                      .padding(bottom = 6.dp),
+                      .padding(bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                   ) {
+                    IconButton(
+                      onClick = { ttsController.previousParagraph() },
+                      modifier = Modifier.testTag("reader_tts_prev"),
+                    ) {
+                      Icon(
+                        imageVector = Icons.Default.SkipPrevious,
+                        contentDescription = stringResource(R.string.tts_action_prev),
+                        tint = theme.text,
+                      )
+                    }
+                    IconButton(
+                      onClick = { ttsController.togglePlayPause() },
+                      modifier = Modifier.testTag("reader_tts_toggle"),
+                    ) {
+                      Icon(
+                        imageVector = if (ttsForBook.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = stringResource(
+                          if (ttsForBook.isPlaying) R.string.tts_action_pause else R.string.tts_action_resume,
+                        ),
+                        tint = theme.accent,
+                      )
+                    }
+                    IconButton(
+                      onClick = { ttsController.nextParagraph() },
+                      modifier = Modifier.testTag("reader_tts_next"),
+                    ) {
+                      Icon(
+                        imageVector = Icons.Default.SkipNext,
+                        contentDescription = stringResource(R.string.tts_action_next),
+                        tint = theme.text,
+                      )
+                    }
                     Text(
-                      text = "Озвучка • ${String.format("%.1fx", preferences.ttsSpeed)}",
+                      text = "${String.format("%.1fx", preferences.ttsSpeed)}",
                       style = MaterialTheme.typography.labelMedium,
                       color = theme.accent,
                       maxLines = 1,
-                      overflow = TextOverflow.Ellipsis,
-                      modifier = Modifier.weight(1f),
                     )
-                    Slider(
+                    ThemedThinSlider(
                       value = preferences.ttsSpeed,
                       onValueChange = {
                         viewModel.setTtsSpeed(it)
                         ttsController.setSpeed(it)
                       },
                       valueRange = 0.7f..2.0f,
-                      colors = SliderDefaults.colors(
-                        thumbColor = theme.accent,
-                        activeTrackColor = theme.accent,
-                        inactiveTrackColor = theme.outline,
-                      ),
-                      modifier = Modifier.weight(1f),
+                      activeColor = theme.accent,
+                      inactiveColor = inactiveBarTrackColor,
+                      modifier = Modifier
+                        .weight(1f)
+                        .testTag("reader_tts_speed_slider"),
                     )
-                    IconButton(onClick = { ttsController.stop() }) {
-                      Icon(Icons.Default.Stop, contentDescription = "Остановить озвучку", tint = theme.text)
+                    IconButton(
+                      onClick = { ttsController.stop() },
+                      modifier = Modifier.testTag("reader_tts_stop"),
+                    ) {
+                      Icon(
+                        imageVector = Icons.Default.Stop,
+                        contentDescription = stringResource(R.string.tts_action_stop),
+                        tint = theme.text,
+                      )
                     }
                   }
                 }
 
                 Row(
-                  modifier = Modifier.fillMaxWidth(),
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp),
                   verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                  val canGoPrev = if (isPagesMode) {
-                    unitIdx > 0 || pageNavHandle.currentPageInChapter > 0
-                  } else {
-                    unitIdx > 0
-                  }
-                  val canGoNext = if (isPagesMode) {
-                    unitIdx + 1 < totalUnits ||
-                      pageNavHandle.currentPageInChapter + 1 < pageNavHandle.totalPagesInChapter
-                  } else {
-                    unitIdx + 1 < totalUnits
-                  }
-
-                  IconButton(
-                    onClick = {
-                      if (isPagesMode) pageNavHandle.previousPage() else viewModel.previousUnit()
-                    },
-                    enabled = canGoPrev,
-                    modifier = Modifier.testTag("reader_prev_unit"),
-                  ) {
-                    Icon(
-                      imageVector = Icons.AutoMirrored.Filled.NavigateBefore,
-                      contentDescription = "Назад",
-                      tint = if (canGoPrev) theme.text else theme.mutedText.copy(alpha = 0.4f),
-                    )
-                  }
-
-                  if (isPagesMode && pageNavHandle.totalPagesInChapter > 1) {
-                    Slider(
-                      value = pageNavHandle.currentPageInChapter.toFloat(),
-                      onValueChange = { pageNavHandle.goToPage(it.roundToInt()) },
-                      valueRange = 0f..(pageNavHandle.totalPagesInChapter - 1).toFloat(),
-                      colors = SliderDefaults.colors(
-                        thumbColor = theme.accent,
-                        activeTrackColor = theme.accent,
-                        inactiveTrackColor = theme.outline,
-                      ),
-                      modifier = Modifier.weight(1f),
-                    )
-                  } else if (totalUnits > 1) {
-                    Slider(
-                      value = unitIdx.toFloat(),
-                      onValueChange = { viewModel.selectUnit(it.roundToInt(), 0) },
-                      valueRange = 0f..(totalUnits - 1).toFloat(),
-                      colors = SliderDefaults.colors(
-                        thumbColor = theme.accent,
-                        activeTrackColor = theme.accent,
-                        inactiveTrackColor = theme.outline,
-                      ),
-                      modifier = Modifier.weight(1f),
-                    )
-                  } else {
-                    Spacer(modifier = Modifier.weight(1f))
-                  }
-
-                  IconButton(
-                    onClick = {
-                      if (isPagesMode) pageNavHandle.nextPage() else viewModel.nextUnit()
-                    },
-                    enabled = canGoNext,
-                    modifier = Modifier.testTag("reader_next_unit"),
-                  ) {
-                    Icon(
-                      imageVector = Icons.AutoMirrored.Filled.NavigateNext,
-                      contentDescription = "Вперёд",
-                      tint = if (canGoNext) theme.text else theme.mutedText.copy(alpha = 0.4f),
-                    )
-                  }
-
-                  val pct = (progressPercent * 100f).roundToInt().coerceIn(0, 100)
+                  Text(
+                    text = bottomChapterPageText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = theme.mutedText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                      .weight(1f)
+                      .padding(end = 12.dp)
+                      .testTag("reader_bottom_chapter_label"),
+                  )
                   Text(
                     text = "$pct%",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                     color = theme.accent,
                     maxLines = 1,
                     softWrap = false,
                     textAlign = TextAlign.End,
-                    modifier = Modifier.padding(start = 6.dp),
+                    modifier = Modifier.testTag("reader_bottom_percent_label"),
                   )
+                }
+
+                when {
+                  isPagesMode && pageNavHandle.totalPagesInChapter > 1 -> {
+                    ThemedThinSlider(
+                      value = pageNavHandle.currentPageInChapter.toFloat(),
+                      onValueChange = { pageNavHandle.goToPage(it.roundToInt()) },
+                      valueRange = 0f..(pageNavHandle.totalPagesInChapter - 1).toFloat(),
+                      activeColor = theme.accent,
+                      inactiveColor = inactiveBarTrackColor,
+                      modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("reader_bottom_slider"),
+                    )
+                  }
+                  totalUnits > 1 -> {
+                    ThemedThinSlider(
+                      value = unitIdx.toFloat(),
+                      onValueChange = { viewModel.selectUnit(it.roundToInt(), 0) },
+                      valueRange = 0f..(totalUnits - 1).toFloat(),
+                      activeColor = theme.accent,
+                      inactiveColor = inactiveBarTrackColor,
+                      modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("reader_bottom_slider"),
+                    )
+                  }
+                  else -> {
+                    ThemedThinSlider(
+                      value = progressPercent.coerceIn(0f, 1f),
+                      onValueChange = {},
+                      valueRange = 0f..1f,
+                      enabled = false,
+                      activeColor = theme.accent,
+                      inactiveColor = inactiveBarTrackColor,
+                      modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("reader_bottom_slider"),
+                    )
+                  }
                 }
               }
             }
@@ -814,8 +1190,10 @@ fun ReaderScreen(
             quotes = quotes,
             onDismiss = { showNavSheet = false },
             onSelectUnit = { targetUnit, targetPara, targetChar ->
-              ttsController.stop()
               viewModel.selectUnit(targetUnit, targetPara, targetChar)
+              if (ttsForBook != null) {
+                ttsController.seekTo(targetUnit, targetPara)
+              }
             },
             onDeleteBookmark = viewModel::deleteBookmark,
             onDeleteQuote = viewModel::deleteQuote,
@@ -829,12 +1207,14 @@ fun ReaderScreen(
             isSearching = isSearching,
             onQueryChange = viewModel::updateSearchQuery,
             onSelectResult = { locator ->
-              ttsController.stop()
               viewModel.selectUnit(
                 unitIndex = locator.chapterIndex,
                 paragraphIndex = locator.paragraphIndex,
                 charOffset = locator.charOffset,
               )
+              if (ttsForBook != null) {
+                ttsController.seekTo(locator.chapterIndex, locator.paragraphIndex)
+              }
             },
             onDismiss = { showSearchSheet = false },
           )
@@ -863,13 +1243,22 @@ fun ReaderScreen(
       }
     }
 
-    SnackbarHost(
-      hostState = snackbarHostState,
-      modifier = Modifier
-        .align(Alignment.BottomCenter)
-        .navigationBarsPadding()
-        .padding(bottom = 84.dp),
-    )
+      SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier
+          .align(Alignment.BottomCenter)
+          .navigationBarsPadding()
+          .padding(bottom = 96.dp),
+        snackbar = { data ->
+          Snackbar(
+            snackbarData = data,
+            containerColor = theme.surfaceContainerHigh,
+            contentColor = theme.text,
+            actionColor = theme.accent,
+          )
+        },
+      )
+    }
   }
 }
 
@@ -878,23 +1267,15 @@ fun ReaderScreen(
 private fun ParagraphView(
   paragraph: BookParagraph,
   preferences: ReaderPreferences,
+  theme: AnimatedReaderColors,
   isQuoted: Boolean,
   isTtsActive: Boolean,
   onToggleBars: () -> Unit,
   onLongClickParagraph: () -> Unit,
 ) {
-  val theme = preferences.readerTheme
-  val baseSize = preferences.fontSizeSp
-  val lineHeight = (baseSize * preferences.lineHeightMultiplier).sp
-  val useHyphens = preferences.hyphenationEnabled
-  val hasCyrillic = remember(paragraph.text) {
-    paragraph.text.any { it in '\u0400'..'\u04FF' }
+  val spec = remember(paragraph.kind, paragraph.text, preferences) {
+    ReaderParagraphStyleResolver.resolve(paragraph.kind, paragraph.text, preferences)
   }
-  val textLocaleList = remember(hasCyrillic, useHyphens) {
-    if (useHyphens && hasCyrillic) LocaleList("ru-RU") else null
-  }
-  val paragraphHyphens = if (useHyphens) Hyphens.Auto else Hyphens.None
-  val paragraphLineBreak = if (useHyphens) LineBreak.Paragraph else LineBreak.Simple
 
   val highlightBg = when {
     isTtsActive -> theme.accent.copy(alpha = 0.18f)
@@ -912,59 +1293,66 @@ private fun ParagraphView(
       onClick = onToggleBars,
       onLongClick = onLongClickParagraph,
     )
-    .padding(horizontal = if (isQuoted || isTtsActive) 8.dp else 0.dp, vertical = 4.dp)
+    .padding(
+      horizontal = if (isQuoted || isTtsActive) 8.dp else 0.dp,
+      vertical = 0.dp,
+    )
 
   when (paragraph.kind) {
     ParagraphKind.HEADING -> {
-      Text(
-        text = paragraph.text,
-        style = MaterialTheme.typography.headlineSmall.copy(
-          fontFamily = preferences.fontOption.fontFamily,
-          fontSize = (baseSize + 5f).sp,
-          lineHeight = ((baseSize + 5f) * 1.28f).sp,
-          fontWeight = FontWeight.SemiBold,
+      Column(
+        modifier = modifier.padding(
+          top = spec.extraTopPaddingDp,
+          bottom = spec.extraBottomPaddingDp,
         ),
-        color = theme.text,
-        modifier = modifier.padding(top = 12.dp, bottom = 6.dp),
-      )
+      ) {
+        Text(
+          text = paragraph.text,
+          style = spec.textStyle,
+          color = theme.text,
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Box(
+          modifier = Modifier
+            .width(36.dp)
+            .height(2.dp)
+            .clip(RoundedCornerShape(1.dp))
+            .background(theme.accent.copy(alpha = 0.5f)),
+        )
+      }
     }
 
     ParagraphKind.SUBHEADING -> {
       Text(
         text = paragraph.text,
-        style = MaterialTheme.typography.titleMedium.copy(
-          fontFamily = preferences.fontOption.fontFamily,
-          fontSize = (baseSize + 2f).sp,
-          lineHeight = ((baseSize + 2f) * 1.35f).sp,
-          fontWeight = FontWeight.Medium,
-        ),
+        style = spec.textStyle,
         color = theme.mutedText,
-        modifier = modifier.padding(top = 8.dp, bottom = 4.dp),
+        modifier = modifier.padding(
+          top = spec.extraTopPaddingDp,
+          bottom = spec.extraBottomPaddingDp,
+        ),
       )
     }
 
     ParagraphKind.QUOTE -> {
       Row(
-        modifier = modifier.padding(vertical = 4.dp),
+        modifier = modifier
+          .height(IntrinsicSize.Min)
+          .padding(
+            top = spec.extraTopPaddingDp,
+            bottom = spec.extraBottomPaddingDp,
+          ),
       ) {
         Box(
           modifier = Modifier
             .width(3.dp)
-            .height(28.dp)
+            .fillMaxHeight()
             .background(theme.accent.copy(alpha = 0.7f)),
         )
         Spacer(modifier = Modifier.width(12.dp))
         Text(
           text = paragraph.text,
-          style = MaterialTheme.typography.bodyLarge.copy(
-            fontFamily = preferences.fontOption.fontFamily,
-            fontSize = (baseSize - 1f).sp,
-            lineHeight = lineHeight,
-            fontStyle = FontStyle.Italic,
-            hyphens = paragraphHyphens,
-            lineBreak = paragraphLineBreak,
-            localeList = textLocaleList,
-          ),
+          style = spec.textStyle,
           color = theme.mutedText,
           modifier = Modifier.weight(1f),
         )
@@ -974,14 +1362,13 @@ private fun ParagraphView(
     ParagraphKind.POEM -> {
       Text(
         text = paragraph.text,
-        style = MaterialTheme.typography.bodyLarge.copy(
-          fontFamily = preferences.fontOption.fontFamily,
-          fontSize = baseSize.sp,
-          lineHeight = lineHeight,
-          fontStyle = FontStyle.Italic,
-        ),
+        style = spec.textStyle,
         color = theme.text,
-        modifier = modifier.padding(start = 20.dp),
+        modifier = modifier.padding(
+          start = spec.extraStartPaddingDp,
+          top = spec.extraTopPaddingDp,
+          bottom = spec.extraBottomPaddingDp,
+        ),
       )
     }
 
@@ -989,15 +1376,11 @@ private fun ParagraphView(
       Surface(
         color = theme.surface,
         shape = RoundedCornerShape(8.dp),
-        modifier = modifier,
+        modifier = modifier.padding(vertical = 4.dp),
       ) {
         Text(
           text = paragraph.text,
-          style = MaterialTheme.typography.bodyMedium.copy(
-            fontFamily = JetBrainsMonoFontFamily,
-            fontSize = (baseSize - 2f).coerceAtLeast(12f).sp,
-            lineHeight = (baseSize * 1.35f).sp,
-          ),
+          style = spec.textStyle,
           color = theme.text,
           modifier = Modifier.padding(10.dp),
         )
@@ -1007,15 +1390,8 @@ private fun ParagraphView(
     ParagraphKind.BODY -> {
       Text(
         text = paragraph.text,
-        style = MaterialTheme.typography.bodyLarge.copy(
-          fontFamily = preferences.fontOption.fontFamily,
-          fontSize = baseSize.sp,
-          lineHeight = lineHeight,
-          hyphens = paragraphHyphens,
-          lineBreak = paragraphLineBreak,
-          localeList = textLocaleList,
-        ),
-        textAlign = if (preferences.justifyText) TextAlign.Justify else TextAlign.Start,
+        style = spec.textStyle,
+        textAlign = spec.textAlign,
         color = theme.text,
         modifier = modifier,
       )
@@ -1028,6 +1404,7 @@ private fun ChapterFooterControls(
   hasPrevious: Boolean,
   hasNext: Boolean,
   textColor: Color,
+  outlineColor: Color,
   accentColor: Color,
   onAccentColor: Color,
   onPrevious: () -> Unit,
@@ -1044,6 +1421,10 @@ private fun ChapterFooterControls(
         onClick = onPrevious,
         modifier = Modifier.weight(1f),
         shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, outlineColor),
+        colors = ButtonDefaults.outlinedButtonColors(
+          contentColor = textColor,
+        ),
       ) {
         Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = null, tint = textColor)
         Text(
@@ -1080,6 +1461,8 @@ private fun PdfPageViewer(
   filePath: String,
   pageIndex: Int,
   invertForNight: Boolean,
+  accentColor: Color,
+  mutedColor: Color,
   onToggleBars: () -> Unit,
 ) {
   var scale by remember(pageIndex) { mutableFloatStateOf(1f) }
@@ -1144,11 +1527,11 @@ private fun PdfPageViewer(
 
     val (isLoading, bmp) = renderResult
     when {
-      isLoading -> CircularProgressIndicator()
+      isLoading -> CircularProgressIndicator(color = accentColor)
       bmp == null -> Text(
         text = "Не удалось отобразить страницу PDF.",
         style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = mutedColor,
         modifier = Modifier.padding(24.dp),
       )
       else -> Image(
@@ -1172,10 +1555,14 @@ private fun PdfPageViewer(
 
 @Composable
 private fun TtsMiniPill(
+  isPlaying: Boolean,
   speed: Float,
   surfaceColor: Color,
   textColor: Color,
   accentColor: Color,
+  onPrevParagraph: () -> Unit,
+  onTogglePlayPause: () -> Unit,
+  onNextParagraph: () -> Unit,
   onSpeedStep: () -> Unit,
   onStop: () -> Unit,
 ) {
@@ -1183,22 +1570,55 @@ private fun TtsMiniPill(
     color = surfaceColor,
     shape = RoundedCornerShape(24.dp),
     shadowElevation = 6.dp,
+    modifier = Modifier.testTag("reader_tts_mini_pill"),
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
+      horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-      Icon(Icons.Default.PlayArrow, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
+      IconButton(onClick = onPrevParagraph, modifier = Modifier.size(36.dp)) {
+        Icon(
+          imageVector = Icons.Default.SkipPrevious,
+          contentDescription = stringResource(R.string.tts_action_prev),
+          tint = textColor,
+          modifier = Modifier.size(20.dp),
+        )
+      }
+      IconButton(onClick = onTogglePlayPause, modifier = Modifier.size(36.dp)) {
+        Icon(
+          imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+          contentDescription = stringResource(
+            if (isPlaying) R.string.tts_action_pause else R.string.tts_action_resume,
+          ),
+          tint = accentColor,
+          modifier = Modifier.size(20.dp),
+        )
+      }
+      IconButton(onClick = onNextParagraph, modifier = Modifier.size(36.dp)) {
+        Icon(
+          imageVector = Icons.Default.SkipNext,
+          contentDescription = stringResource(R.string.tts_action_next),
+          tint = textColor,
+          modifier = Modifier.size(20.dp),
+        )
+      }
       Text(
-        text = "Озвучка ${String.format("%.1fx", speed)}",
+        text = String.format("%.1fx", speed),
         style = MaterialTheme.typography.labelMedium,
         color = textColor,
         maxLines = 1,
-        modifier = Modifier.clickable(onClick = onSpeedStep),
+        modifier = Modifier
+          .clickable(onClick = onSpeedStep)
+          .padding(horizontal = 6.dp),
       )
-      IconButton(onClick = onStop, modifier = Modifier.size(32.dp)) {
-        Icon(Icons.Default.Stop, contentDescription = "Остановить", tint = textColor, modifier = Modifier.size(18.dp))
+      IconButton(onClick = onStop, modifier = Modifier.size(36.dp)) {
+        Icon(
+          imageVector = Icons.Default.Stop,
+          contentDescription = stringResource(R.string.tts_action_stop),
+          tint = textColor,
+          modifier = Modifier.size(18.dp),
+        )
       }
     }
   }

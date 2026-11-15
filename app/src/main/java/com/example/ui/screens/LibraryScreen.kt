@@ -1,6 +1,14 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -36,18 +44,22 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -69,14 +81,17 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.local.BookEntity
 import com.example.data.local.BookFormat
 import com.example.ui.components.BookCoverArt
+import com.example.ui.theme.LocalAnimationsEnabled
 import com.example.ui.viewmodel.LibraryUiState
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun LibraryScreen(
   uiState: LibraryUiState,
@@ -87,7 +102,60 @@ fun LibraryScreen(
   onDeleteBook: (BookEntity) -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  LibraryScreenWithSharedTransition(
+    uiState = uiState,
+    onSearchQueryChanged = onSearchQueryChanged,
+    onFormatSelected = onFormatSelected,
+    onImportBookClick = onImportBookClick,
+    onOpenBook = onOpenBook,
+    onDeleteBook = onDeleteBook,
+    modifier = modifier,
+    sharedTransitionScope = null,
+    animatedVisibilityScope = null,
+  )
+}
+
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+fun LibraryScreen(
+  uiState: LibraryUiState,
+  onSearchQueryChanged: (String) -> Unit,
+  onFormatSelected: (BookFormat?) -> Unit,
+  onImportBookClick: () -> Unit,
+  onOpenBook: (Long) -> Unit,
+  onDeleteBook: (BookEntity) -> Unit,
+  sharedTransitionScope: SharedTransitionScope?,
+  animatedVisibilityScope: AnimatedVisibilityScope?,
+  modifier: Modifier = Modifier,
+) {
+  LibraryScreenWithSharedTransition(
+    uiState = uiState,
+    onSearchQueryChanged = onSearchQueryChanged,
+    onFormatSelected = onFormatSelected,
+    onImportBookClick = onImportBookClick,
+    onOpenBook = onOpenBook,
+    onDeleteBook = onDeleteBook,
+    modifier = modifier,
+    sharedTransitionScope = sharedTransitionScope,
+    animatedVisibilityScope = animatedVisibilityScope,
+  )
+}
+
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+private fun LibraryScreenWithSharedTransition(
+  uiState: LibraryUiState,
+  onSearchQueryChanged: (String) -> Unit,
+  onFormatSelected: (BookFormat?) -> Unit,
+  onImportBookClick: () -> Unit,
+  onOpenBook: (Long) -> Unit,
+  onDeleteBook: (BookEntity) -> Unit,
+  modifier: Modifier = Modifier,
+  sharedTransitionScope: SharedTransitionScope? = null,
+  animatedVisibilityScope: AnimatedVisibilityScope? = null,
+) {
   var pendingDeleteBook by remember { mutableStateOf<BookEntity?>(null) }
+  val animationsEnabled = LocalAnimationsEnabled.current
 
   Scaffold(
     modifier = modifier.fillMaxSize(),
@@ -121,6 +189,7 @@ fun LibraryScreen(
         LibraryHeader(
           bookCount = uiState.books.size,
           isImporting = uiState.isImporting,
+          animationsEnabled = animationsEnabled,
         )
 
         if (uiState.books.isEmpty()) {
@@ -151,6 +220,19 @@ fun LibraryScreen(
             },
             singleLine = true,
             shape = RoundedCornerShape(16.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+              focusedBorderColor = MaterialTheme.colorScheme.primary,
+              unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+              focusedLeadingIconColor = MaterialTheme.colorScheme.primary,
+              unfocusedLeadingIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+              focusedTrailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+              unfocusedTrailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+              focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+              unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+              focusedTextColor = MaterialTheme.colorScheme.onSurface,
+              unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+              cursorColor = MaterialTheme.colorScheme.primary,
+            ),
             modifier = Modifier
               .fillMaxWidth()
               .padding(horizontal = 16.dp)
@@ -170,14 +252,30 @@ fun LibraryScreen(
           val showContinueHero = continueBook != null &&
             uiState.searchQuery.isBlank() &&
             uiState.selectedFormat == null
-          val shelfBooks = if (showContinueHero && continueBook != null) {
-            uiState.filteredBooks.filter { it.id != continueBook.id }
+          val shelfBooks = if (showContinueHero) {
+            uiState.filteredBooks.filter { it.id != continueBook!!.id }
           } else {
             uiState.filteredBooks
           }
 
+          val itemFadeSpec = remember(animationsEnabled) {
+            if (animationsEnabled) tween<Float>(durationMillis = 220) else snap()
+          }
+          val itemPlacementSpec = remember(animationsEnabled) {
+            if (animationsEnabled) {
+              spring<IntOffset>(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow,
+              )
+            } else {
+              snap()
+            }
+          }
+
           LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+              .fillMaxSize()
+              .testTag("library_books_list"),
             contentPadding = PaddingValues(
               start = 16.dp,
               end = 16.dp,
@@ -186,12 +284,21 @@ fun LibraryScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
           ) {
-            if (showContinueHero && continueBook != null) {
-              item(key = "continue_${continueBook.id}") {
+            if (showContinueHero) {
+              val activeContinueBook = continueBook!!
+              item(key = "continue_${activeContinueBook.id}") {
                 ContinueReadingCard(
-                  book = continueBook,
-                  onClick = { onOpenBook(continueBook.id) },
-                  onDeleteClick = { pendingDeleteBook = continueBook },
+                  book = activeContinueBook,
+                  onClick = { onOpenBook(activeContinueBook.id) },
+                  onDeleteClick = { pendingDeleteBook = activeContinueBook },
+                  sharedTransitionScope = sharedTransitionScope,
+                  animatedVisibilityScope = animatedVisibilityScope,
+                  animationsEnabled = animationsEnabled,
+                  modifier = Modifier.animateItem(
+                    fadeInSpec = itemFadeSpec,
+                    placementSpec = itemPlacementSpec,
+                    fadeOutSpec = itemFadeSpec,
+                  ),
                 )
               }
               if (shelfBooks.isNotEmpty()) {
@@ -200,7 +307,13 @@ fun LibraryScreen(
                     text = "Все книги",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
+                    modifier = Modifier
+                      .animateItem(
+                        fadeInSpec = itemFadeSpec,
+                        placementSpec = itemPlacementSpec,
+                        fadeOutSpec = itemFadeSpec,
+                      )
+                      .padding(top = 6.dp, bottom = 2.dp),
                   )
                 }
               }
@@ -224,6 +337,14 @@ fun LibraryScreen(
                   book = book,
                   onClick = { onOpenBook(book.id) },
                   onDeleteClick = { pendingDeleteBook = book },
+                  sharedTransitionScope = sharedTransitionScope,
+                  animatedVisibilityScope = animatedVisibilityScope,
+                  animationsEnabled = animationsEnabled,
+                  modifier = Modifier.animateItem(
+                    fadeInSpec = itemFadeSpec,
+                    placementSpec = itemPlacementSpec,
+                    fadeOutSpec = itemFadeSpec,
+                  ),
                 )
               }
             }
@@ -236,6 +357,9 @@ fun LibraryScreen(
   pendingDeleteBook?.let { bookToDelete ->
     AlertDialog(
       onDismissRequest = { pendingDeleteBook = null },
+      containerColor = MaterialTheme.colorScheme.surface,
+      titleContentColor = MaterialTheme.colorScheme.onSurface,
+      textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
       title = { Text("Удалить книгу?") },
       text = {
         Text("«${bookToDelete.title}» будет удалена из библиотеки, включая закладки и цитаты.")
@@ -245,13 +369,21 @@ fun LibraryScreen(
           onClick = {
             onDeleteBook(bookToDelete)
             pendingDeleteBook = null
-          }
+          },
+          colors = ButtonDefaults.textButtonColors(
+            contentColor = MaterialTheme.colorScheme.error,
+          ),
         ) {
           Text("Удалить", color = MaterialTheme.colorScheme.error)
         }
       },
       dismissButton = {
-        TextButton(onClick = { pendingDeleteBook = null }) {
+        TextButton(
+          onClick = { pendingDeleteBook = null },
+          colors = ButtonDefaults.textButtonColors(
+            contentColor = MaterialTheme.colorScheme.primary,
+          ),
+        ) {
           Text("Отмена")
         }
       },
@@ -263,6 +395,7 @@ fun LibraryScreen(
 private fun LibraryHeader(
   bookCount: Int,
   isImporting: Boolean,
+  animationsEnabled: Boolean,
 ) {
   Row(
     modifier = Modifier
@@ -292,7 +425,12 @@ private fun LibraryHeader(
       )
     }
 
-    AnimatedVisibility(visible = isImporting, enter = fadeIn(), exit = fadeOut()) {
+    val importFadeMs = if (animationsEnabled) 200 else 0
+    AnimatedVisibility(
+      visible = isImporting,
+      enter = fadeIn(tween(importFadeMs)),
+      exit = fadeOut(tween(importFadeMs)),
+    ) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -301,8 +439,14 @@ private fun LibraryHeader(
         CircularProgressIndicator(
           modifier = Modifier.size(18.dp),
           strokeWidth = 2.dp,
+          color = MaterialTheme.colorScheme.primary,
         )
-        Text("Открытие...", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        Text(
+          text = "Открытие...",
+          style = MaterialTheme.typography.labelMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+        )
       }
     }
   }
@@ -313,6 +457,15 @@ private fun FormatFilterRow(
   selectedFormat: BookFormat?,
   onFormatSelected: (BookFormat?) -> Unit,
 ) {
+  val chipColors = FilterChipDefaults.filterChipColors(
+    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+    labelColor = MaterialTheme.colorScheme.onSurface,
+    iconColor = MaterialTheme.colorScheme.onSurface,
+    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    selectedLeadingIconColor = MaterialTheme.colorScheme.primary,
+  )
+
   Row(
     modifier = Modifier
       .fillMaxWidth()
@@ -320,16 +473,32 @@ private fun FormatFilterRow(
       .padding(horizontal = 16.dp),
     horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
+    val allSelected = selectedFormat == null
     FilterChip(
-      selected = selectedFormat == null,
+      selected = allSelected,
       onClick = { onFormatSelected(null) },
+      colors = chipColors,
+      border = FilterChipDefaults.filterChipBorder(
+        enabled = true,
+        selected = allSelected,
+        borderColor = MaterialTheme.colorScheme.outlineVariant,
+        selectedBorderColor = MaterialTheme.colorScheme.primary,
+      ),
       label = { Text("Все", maxLines = 1) },
       modifier = Modifier.testTag("filter_all"),
     )
     BookFormat.entries.forEach { format ->
+      val isSelected = selectedFormat == format
       FilterChip(
-        selected = selectedFormat == format,
-        onClick = { onFormatSelected(if (selectedFormat == format) null else format) },
+        selected = isSelected,
+        onClick = { onFormatSelected(if (isSelected) null else format) },
+        colors = chipColors,
+        border = FilterChipDefaults.filterChipBorder(
+          enabled = true,
+          selected = isSelected,
+          borderColor = MaterialTheme.colorScheme.outlineVariant,
+          selectedBorderColor = MaterialTheme.colorScheme.primary,
+        ),
         label = { Text(format.label, maxLines = 1) },
         modifier = Modifier.testTag("filter_${format.name.lowercase()}"),
       )
@@ -337,18 +506,35 @@ private fun FormatFilterRow(
   }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalSharedTransitionApi::class)
 @Composable
 private fun ContinueReadingCard(
   book: BookEntity,
   onClick: () -> Unit,
   onDeleteClick: () -> Unit,
+  sharedTransitionScope: SharedTransitionScope? = null,
+  animatedVisibilityScope: AnimatedVisibilityScope? = null,
+  animationsEnabled: Boolean = true,
+  modifier: Modifier = Modifier,
 ) {
   val percent = (book.progressPercent * 100).roundToInt().coerceIn(0, 100)
   val haptics = LocalHapticFeedback.current
   var menuExpanded by remember { mutableStateOf(false) }
 
-  Box(modifier = Modifier.fillMaxWidth()) {
+  val sharedCoverModifier = if (animationsEnabled && sharedTransitionScope != null && animatedVisibilityScope != null) {
+    with(sharedTransitionScope) {
+      Modifier.sharedBounds(
+        sharedContentState = rememberSharedContentState(key = "book_cover_${book.id}"),
+        animatedVisibilityScope = animatedVisibilityScope,
+        boundsTransform = { _, _ -> tween(durationMillis = 280, easing = FastOutSlowInEasing) },
+        resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds(),
+      )
+    }
+  } else {
+    Modifier
+  }
+
+  Box(modifier = modifier.fillMaxWidth()) {
     Card(
       modifier = Modifier
         .fillMaxWidth()
@@ -376,7 +562,8 @@ private fun ContinueReadingCard(
           book = book,
           modifier = Modifier
             .width(84.dp)
-            .aspectRatio(0.68f),
+            .aspectRatio(0.68f)
+            .then(sharedCoverModifier),
         )
         Spacer(modifier = Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -414,6 +601,10 @@ private fun ContinueReadingCard(
           ) {
             LinearProgressIndicator(
               progress = { book.progressPercent.coerceIn(0f, 1f) },
+              color = MaterialTheme.colorScheme.primary,
+              trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+              gapSize = 0.dp,
+              drawStopIndicator = {},
               modifier = Modifier
                 .weight(1f)
                 .height(6.dp)
@@ -431,6 +622,10 @@ private fun ContinueReadingCard(
           Button(
             onClick = onClick,
             shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(
+              containerColor = MaterialTheme.colorScheme.primary,
+              contentColor = MaterialTheme.colorScheme.onPrimary,
+            ),
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
             modifier = Modifier.testTag("continue_reading_button"),
           ) {
@@ -453,9 +648,14 @@ private fun ContinueReadingCard(
     DropdownMenu(
       expanded = menuExpanded,
       onDismissRequest = { menuExpanded = false },
+      containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
       DropdownMenuItem(
         text = { Text("Открыть") },
+        colors = MenuDefaults.itemColors(
+          textColor = MaterialTheme.colorScheme.onSurface,
+          leadingIconColor = MaterialTheme.colorScheme.onSurface,
+        ),
         leadingIcon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null) },
         onClick = {
           menuExpanded = false
@@ -464,6 +664,10 @@ private fun ContinueReadingCard(
       )
       DropdownMenuItem(
         text = { Text("Удалить книгу", color = MaterialTheme.colorScheme.error) },
+        colors = MenuDefaults.itemColors(
+          textColor = MaterialTheme.colorScheme.error,
+          leadingIconColor = MaterialTheme.colorScheme.error,
+        ),
         leadingIcon = {
           Icon(
             Icons.Default.DeleteOutline,
@@ -480,18 +684,35 @@ private fun ContinueReadingCard(
   }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalSharedTransitionApi::class)
 @Composable
 private fun BookShelfItemCard(
   book: BookEntity,
   onClick: () -> Unit,
   onDeleteClick: () -> Unit,
+  sharedTransitionScope: SharedTransitionScope? = null,
+  animatedVisibilityScope: AnimatedVisibilityScope? = null,
+  animationsEnabled: Boolean = true,
+  modifier: Modifier = Modifier,
 ) {
   val percent = (book.progressPercent * 100).roundToInt().coerceIn(0, 100)
   val haptics = LocalHapticFeedback.current
   var menuExpanded by remember { mutableStateOf(false) }
 
-  Box(modifier = Modifier.fillMaxWidth()) {
+  val sharedCoverModifier = if (animationsEnabled && sharedTransitionScope != null && animatedVisibilityScope != null) {
+    with(sharedTransitionScope) {
+      Modifier.sharedBounds(
+        sharedContentState = rememberSharedContentState(key = "book_cover_${book.id}"),
+        animatedVisibilityScope = animatedVisibilityScope,
+        boundsTransform = { _, _ -> tween(durationMillis = 280, easing = FastOutSlowInEasing) },
+        resizeMode = SharedTransitionScope.ResizeMode.ScaleToBounds(),
+      )
+    }
+  } else {
+    Modifier
+  }
+
+  Box(modifier = modifier.fillMaxWidth()) {
     Card(
       modifier = Modifier
         .fillMaxWidth()
@@ -519,7 +740,8 @@ private fun BookShelfItemCard(
           book = book,
           modifier = Modifier
             .width(60.dp)
-            .aspectRatio(0.7f),
+            .aspectRatio(0.7f)
+            .then(sharedCoverModifier),
         )
         Spacer(modifier = Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -544,6 +766,10 @@ private fun BookShelfItemCard(
           ) {
             LinearProgressIndicator(
               progress = { book.progressPercent.coerceIn(0f, 1f) },
+              color = MaterialTheme.colorScheme.primary,
+              trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+              gapSize = 0.dp,
+              drawStopIndicator = {},
               modifier = Modifier
                 .weight(1f)
                 .height(5.dp)
@@ -564,9 +790,14 @@ private fun BookShelfItemCard(
     DropdownMenu(
       expanded = menuExpanded,
       onDismissRequest = { menuExpanded = false },
+      containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
       DropdownMenuItem(
         text = { Text("Открыть") },
+        colors = MenuDefaults.itemColors(
+          textColor = MaterialTheme.colorScheme.onSurface,
+          leadingIconColor = MaterialTheme.colorScheme.onSurface,
+        ),
         leadingIcon = { Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null) },
         onClick = {
           menuExpanded = false
@@ -575,6 +806,10 @@ private fun BookShelfItemCard(
       )
       DropdownMenuItem(
         text = { Text("Удалить книгу", color = MaterialTheme.colorScheme.error) },
+        colors = MenuDefaults.itemColors(
+          textColor = MaterialTheme.colorScheme.error,
+          leadingIconColor = MaterialTheme.colorScheme.error,
+        ),
         leadingIcon = {
           Icon(
             Icons.Default.DeleteOutline,
@@ -630,6 +865,10 @@ private fun EmptyLibraryState(
     Button(
       onClick = onImportClick,
       shape = RoundedCornerShape(14.dp),
+      colors = ButtonDefaults.buttonColors(
+        containerColor = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+      ),
       contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
       modifier = Modifier.testTag("empty_import_button"),
     ) {
