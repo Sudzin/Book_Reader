@@ -1,9 +1,11 @@
 package com.example.data.local
 
+import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.example.reader.engine.Locator
 
 @Entity(tableName = "books")
 data class BookEntity(
@@ -15,12 +17,13 @@ data class BookEntity(
   val coverPath: String? = null,
   val contentHash: String,
   val totalUnits: Int = 1,
-  val currentUnitIndex: Int = 0,
-  val currentParagraphIndex: Int = 0,
+  val totalChars: Long = 0L,
+  val cacheFilePath: String? = null,
+  @Embedded(prefix = "locator_") val locator: Locator = Locator(),
   val progressPercent: Float = 0f,
   val lastReadAt: Long = 0L,
   val addedAt: Long = System.currentTimeMillis(),
-  val accentColorHex: Long = 0xFF9C422EL,
+  val accentColorHex: Long = 0xFF8C4B2DL,
 )
 
 @Entity(
@@ -38,8 +41,7 @@ data class BookEntity(
 data class BookmarkEntity(
   @PrimaryKey(autoGenerate = true) val id: Long = 0L,
   val bookId: Long,
-  val unitIndex: Int,
-  val paragraphIndex: Int,
+  @Embedded(prefix = "locator_") val locator: Locator = Locator(),
   val unitTitle: String,
   val previewText: String,
   val createdAt: Long = System.currentTimeMillis(),
@@ -62,8 +64,7 @@ data class QuoteEntity(
   val bookId: Long,
   val bookTitle: String,
   val bookAuthor: String,
-  val unitIndex: Int,
-  val paragraphIndex: Int,
+  @Embedded(prefix = "locator_") val locator: Locator = Locator(),
   val unitTitle: String,
   val text: String,
   val note: String = "",

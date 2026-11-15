@@ -16,7 +16,9 @@ enum class BookFormat(val label: String) {
         lower.endsWith(".txt") -> TXT
         mimeType == "application/epub+zip" -> EPUB
         mimeType == "application/pdf" -> PDF
-        mimeType == "application/x-fictionbook+xml" || mimeType == "application/fb2+zip" -> FB2
+        mimeType == "application/x-fictionbook+xml" ||
+          mimeType == "application/fb2+zip" ||
+          mimeType == "application/x-fictionbook" -> FB2
         mimeType == "text/plain" -> TXT
         else -> null
       }

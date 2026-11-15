@@ -11,6 +11,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -22,11 +24,15 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.FormatQuote
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -39,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -65,10 +72,10 @@ private object Routes {
   const val LIBRARY = "library"
   const val QUOTES = "quotes"
   const val SETTINGS = "settings"
-  const val READER = "reader/{bookId}?unit={unit}&para={para}"
+  const val READER = "reader/{bookId}?unit={unit}&para={para}&char={char}"
 
-  fun readerRoute(bookId: Long, unit: Int = -1, paragraph: Int = -1): String =
-    "reader/$bookId?unit=$unit&para=$paragraph"
+  fun readerRoute(bookId: Long, unit: Int = -1, paragraph: Int = -1, charOffset: Int = -1): String =
+    "reader/$bookId?unit=$unit&para=$paragraph&char=$charOffset"
 }
 
 class MainActivity : ComponentActivity() {
@@ -91,7 +98,10 @@ class MainActivity : ComponentActivity() {
       )
       val preferences by libraryViewModel.preferences.collectAsStateWithLifecycle()
 
-      ListayTheme(dynamicColor = preferences.useDynamicColor) {
+      ListayTheme(
+        readerTheme = preferences.readerTheme,
+        dynamicColor = preferences.useDynamicColor,
+      ) {
         ListayApp(
           libraryViewModel = libraryViewModel,
           bookRepository = bookRepository,
@@ -210,14 +220,36 @@ private fun ListayApp(
       }
     }
 
+    val navBarItemColors = NavigationBarItemDefaults.colors(
+      selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+      selectedTextColor = MaterialTheme.colorScheme.onSurface,
+      indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+      unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+      unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    val navRailItemColors = NavigationRailItemDefaults.colors(
+      selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+      selectedTextColor = MaterialTheme.colorScheme.onSurface,
+      indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+      unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+      unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
     Scaffold(
+      containerColor = MaterialTheme.colorScheme.background,
+      contentWindowInsets = if (showMainTabs) ScaffoldDefaults.contentWindowInsets else WindowInsets(0, 0, 0, 0),
       snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
       bottomBar = {
         if (showMainTabs && !useNavigationRail) {
-          NavigationBar {
+          NavigationBar(
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+          ) {
             NavigationBarItem(
               selected = currentRoute == Routes.LIBRARY,
               onClick = { navigateTab(Routes.LIBRARY) },
+              colors = navBarItemColors,
               icon = {
                 Icon(
                   imageVector = if (currentRoute == Routes.LIBRARY) {
@@ -228,12 +260,20 @@ private fun ListayApp(
                   contentDescription = stringResource(R.string.tab_library),
                 )
               },
-              label = { Text(stringResource(R.string.tab_library)) },
+              label = {
+                Text(
+                  text = stringResource(R.string.tab_library),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  softWrap = false,
+                )
+              },
               modifier = Modifier.testTag("nav_library"),
             )
             NavigationBarItem(
               selected = currentRoute == Routes.QUOTES,
               onClick = { navigateTab(Routes.QUOTES) },
+              colors = navBarItemColors,
               icon = {
                 Icon(
                   imageVector = if (currentRoute == Routes.QUOTES) {
@@ -244,12 +284,20 @@ private fun ListayApp(
                   contentDescription = stringResource(R.string.tab_quotes),
                 )
               },
-              label = { Text(stringResource(R.string.tab_quotes)) },
+              label = {
+                Text(
+                  text = stringResource(R.string.tab_quotes),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  softWrap = false,
+                )
+              },
               modifier = Modifier.testTag("nav_quotes"),
             )
             NavigationBarItem(
               selected = currentRoute == Routes.SETTINGS,
               onClick = { navigateTab(Routes.SETTINGS) },
+              colors = navBarItemColors,
               icon = {
                 Icon(
                   imageVector = if (currentRoute == Routes.SETTINGS) {
@@ -260,7 +308,14 @@ private fun ListayApp(
                   contentDescription = stringResource(R.string.tab_settings),
                 )
               },
-              label = { Text(stringResource(R.string.tab_settings)) },
+              label = {
+                Text(
+                  text = stringResource(R.string.tab_settings),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  softWrap = false,
+                )
+              },
               modifier = Modifier.testTag("nav_settings"),
             )
           }
@@ -269,39 +324,63 @@ private fun ListayApp(
     ) { innerPadding ->
       Row(modifier = Modifier.fillMaxSize()) {
         if (showMainTabs && useNavigationRail) {
-          NavigationRail(modifier = Modifier.fillMaxHeight()) {
+          NavigationRail(
+            containerColor = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxHeight(),
+          ) {
             NavigationRailItem(
               selected = currentRoute == Routes.LIBRARY,
               onClick = { navigateTab(Routes.LIBRARY) },
+              colors = navRailItemColors,
               icon = {
                 Icon(
                   imageVector = Icons.AutoMirrored.Filled.MenuBook,
                   contentDescription = stringResource(R.string.tab_library),
                 )
               },
-              label = { Text(stringResource(R.string.tab_library)) },
+              label = {
+                Text(
+                  text = stringResource(R.string.tab_library),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              },
             )
             NavigationRailItem(
               selected = currentRoute == Routes.QUOTES,
               onClick = { navigateTab(Routes.QUOTES) },
+              colors = navRailItemColors,
               icon = {
                 Icon(
                   imageVector = Icons.Default.FormatQuote,
                   contentDescription = stringResource(R.string.tab_quotes),
                 )
               },
-              label = { Text(stringResource(R.string.tab_quotes)) },
+              label = {
+                Text(
+                  text = stringResource(R.string.tab_quotes),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              },
             )
             NavigationRailItem(
               selected = currentRoute == Routes.SETTINGS,
               onClick = { navigateTab(Routes.SETTINGS) },
+              colors = navRailItemColors,
               icon = {
                 Icon(
                   imageVector = Icons.Default.Settings,
                   contentDescription = stringResource(R.string.tab_settings),
                 )
               },
-              label = { Text(stringResource(R.string.tab_settings)) },
+              label = {
+                Text(
+                  text = stringResource(R.string.tab_settings),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              },
             )
           }
         }
@@ -309,7 +388,14 @@ private fun ListayApp(
         NavHost(
           navController = navController,
           startDestination = Routes.LIBRARY,
-          modifier = if (showMainTabs) Modifier.weight(1f).padding(innerPadding) else Modifier.weight(1f),
+          modifier = if (showMainTabs) {
+            Modifier
+              .weight(1f)
+              .padding(innerPadding)
+              .consumeWindowInsets(innerPadding)
+          } else {
+            Modifier.weight(1f)
+          },
         ) {
           composable(Routes.LIBRARY) {
             LibraryScreen(
@@ -327,8 +413,8 @@ private fun ListayApp(
           composable(Routes.QUOTES) {
             QuotesScreen(
               quotes = allQuotes,
-              onOpenQuoteInBook = { bookId, unitIdx, paraIdx ->
-                navController.navigate(Routes.readerRoute(bookId, unitIdx, paraIdx))
+              onOpenQuoteInBook = { bookId, unitIdx, paraIdx, charOff ->
+                navController.navigate(Routes.readerRoute(bookId, unitIdx, paraIdx, charOff))
               },
               onDeleteQuote = libraryViewModel::deleteQuote,
             )
@@ -339,6 +425,8 @@ private fun ListayApp(
               preferences = preferences,
               bookCount = libraryState.books.size,
               quoteCount = allQuotes.size,
+              onSelectTheme = libraryViewModel::setReaderTheme,
+              onSelectReadingMode = libraryViewModel::setReadingMode,
               onToggleDynamicColor = libraryViewModel::setUseDynamicColor,
               onToggleVolumePaging = libraryViewModel::setVolumeKeyNavigation,
               onToggleKeepScreenOn = libraryViewModel::setKeepScreenOn,
@@ -351,17 +439,20 @@ private fun ListayApp(
               navArgument("bookId") { type = NavType.LongType },
               navArgument("unit") { type = NavType.IntType; defaultValue = -1 },
               navArgument("para") { type = NavType.IntType; defaultValue = -1 },
+              navArgument("char") { type = NavType.IntType; defaultValue = -1 },
             ),
           ) { entry ->
             val bookId = entry.arguments?.getLong("bookId") ?: 0L
             val unitArg = entry.arguments?.getInt("unit")?.takeIf { it >= 0 }
             val paraArg = entry.arguments?.getInt("para")?.takeIf { it >= 0 }
+            val charArg = entry.arguments?.getInt("char")?.takeIf { it >= 0 }
             val readerViewModel: ReaderViewModel = viewModel(
-              key = "reader_${bookId}_${unitArg ?: -1}_${paraArg ?: -1}",
+              key = "reader_${bookId}_${unitArg ?: -1}_${paraArg ?: -1}_${charArg ?: -1}",
               factory = ReaderViewModel.Factory(
                 bookId = bookId,
                 initialUnitOverride = unitArg,
                 initialParagraphOverride = paraArg,
+                initialCharOffsetOverride = charArg,
                 bookRepository = bookRepository,
                 preferencesRepository = preferencesRepository,
               ),

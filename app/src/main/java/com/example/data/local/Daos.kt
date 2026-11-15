@@ -26,21 +26,41 @@ interface BookDao {
   @Query(
     """
     UPDATE books
-    SET currentUnitIndex = :unitIndex,
-        currentParagraphIndex = :paragraphIndex,
+    SET locator_chapterIndex = :chapterIndex,
+        locator_paragraphIndex = :paragraphIndex,
+        locator_charOffset = :charOffset,
         progressPercent = :progressPercent,
         totalUnits = :totalUnits,
+        totalChars = :totalChars,
         lastReadAt = :lastReadAt
     WHERE id = :bookId
     """
   )
   suspend fun updateProgress(
     bookId: Long,
-    unitIndex: Int,
+    chapterIndex: Int,
     paragraphIndex: Int,
+    charOffset: Int,
     progressPercent: Float,
     totalUnits: Int,
+    totalChars: Long,
     lastReadAt: Long,
+  )
+
+  @Query(
+    """
+    UPDATE books
+    SET cacheFilePath = :cacheFilePath,
+        totalUnits = :totalUnits,
+        totalChars = :totalChars
+    WHERE id = :bookId
+    """
+  )
+  suspend fun updateCacheMetadata(
+    bookId: Long,
+    cacheFilePath: String,
+    totalUnits: Int,
+    totalChars: Long,
   )
 
   @Query("DELETE FROM books WHERE id = :bookId")
@@ -49,11 +69,31 @@ interface BookDao {
 
 @Dao
 interface BookmarkDao {
-  @Query("SELECT * FROM bookmarks WHERE bookId = :bookId ORDER BY unitIndex ASC, paragraphIndex ASC")
+  @Query(
+    """
+    SELECT * FROM bookmarks
+    WHERE bookId = :bookId
+    ORDER BY locator_chapterIndex ASC, locator_paragraphIndex ASC, locator_charOffset ASC
+    """
+  )
   fun observeBookmarksForBook(bookId: Long): Flow<List<BookmarkEntity>>
 
-  @Query("SELECT * FROM bookmarks WHERE bookId = :bookId AND unitIndex = :unitIndex LIMIT 1")
-  suspend fun findBookmarkInUnit(bookId: Long, unitIndex: Int): BookmarkEntity?
+  @Query(
+    """
+    SELECT * FROM bookmarks
+    WHERE bookId = :bookId
+      AND locator_chapterIndex = :chapterIndex
+      AND locator_paragraphIndex = :paragraphIndex
+      AND locator_charOffset = :charOffset
+    LIMIT 1
+    """
+  )
+  suspend fun findBookmarkAtLocator(
+    bookId: Long,
+    chapterIndex: Int,
+    paragraphIndex: Int,
+    charOffset: Int,
+  ): BookmarkEntity?
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertBookmark(bookmark: BookmarkEntity): Long
@@ -67,7 +107,13 @@ interface QuoteDao {
   @Query("SELECT * FROM quotes ORDER BY createdAt DESC")
   fun observeAllQuotes(): Flow<List<QuoteEntity>>
 
-  @Query("SELECT * FROM quotes WHERE bookId = :bookId ORDER BY unitIndex ASC, paragraphIndex ASC")
+  @Query(
+    """
+    SELECT * FROM quotes
+    WHERE bookId = :bookId
+    ORDER BY locator_chapterIndex ASC, locator_paragraphIndex ASC, locator_charOffset ASC
+    """
+  )
   fun observeQuotesForBook(bookId: Long): Flow<List<QuoteEntity>>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)

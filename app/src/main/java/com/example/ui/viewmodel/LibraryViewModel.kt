@@ -130,6 +130,14 @@ class LibraryViewModel(
     }
   }
 
+  fun setReaderTheme(mode: com.example.data.local.ReaderThemeMode) {
+    viewModelScope.launch { preferencesRepository.updateTheme(mode) }
+  }
+
+  fun setReadingMode(mode: com.example.data.local.ReaderReadingMode) {
+    viewModelScope.launch { preferencesRepository.updateReadingMode(mode) }
+  }
+
   fun setUseDynamicColor(enabled: Boolean) {
     viewModelScope.launch { preferencesRepository.updateDynamicColor(enabled) }
   }

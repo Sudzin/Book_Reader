@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,8 +19,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.ViewDay
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -35,8 +38,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.local.ReaderPreferences
+import com.example.data.local.ReaderReadingMode
+import com.example.data.local.ReaderThemeMode
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -44,6 +51,8 @@ fun SettingsScreen(
   preferences: ReaderPreferences,
   bookCount: Int,
   quoteCount: Int,
+  onSelectTheme: (ReaderThemeMode) -> Unit,
+  onSelectReadingMode: (ReaderReadingMode) -> Unit,
   onToggleDynamicColor: (Boolean) -> Unit,
   onToggleVolumePaging: (Boolean) -> Unit,
   onToggleKeepScreenOn: (Boolean) -> Unit,
@@ -60,18 +69,22 @@ fun SettingsScreen(
         .fillMaxSize()
         .widthIn(max = 760.dp)
         .verticalScroll(rememberScrollState())
-        .padding(horizontal = 20.dp, vertical = 14.dp),
-      verticalArrangement = Arrangement.spacedBy(16.dp),
+        .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 20.dp),
+      verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
       Column {
         Text(
           text = "Настройки",
-          style = MaterialTheme.typography.displaySmall,
+          style = MaterialTheme.typography.headlineMedium,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
         )
         Text(
-          text = "Параметры читалки и адаптация под Google Pixel",
+          text = "Палитра интерфейса и параметры чтения",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
         )
       }
 
@@ -85,12 +98,142 @@ fun SettingsScreen(
         Row(
           modifier = Modifier
             .fillMaxWidth()
-            .padding(18.dp),
-          horizontalArrangement = Arrangement.SpaceEvenly,
+            .padding(16.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          StatBlock(value = bookCount.toString(), label = "Книг на полке")
-          StatBlock(value = quoteCount.toString(), label = "Цитат")
-          StatBlock(value = preferences.readerTheme.title, label = "Тема чтения")
+          StatBlock(
+            value = bookCount.toString(),
+            label = "Книг",
+            modifier = Modifier.weight(1f),
+          )
+          StatBlock(
+            value = quoteCount.toString(),
+            label = "Цитат",
+            modifier = Modifier.weight(1f),
+          )
+          StatBlock(
+            value = preferences.readerTheme.title,
+            label = "Тема",
+            modifier = Modifier.weight(1f),
+          )
+        }
+      }
+
+      Text(
+        text = "Тема приложения и чтения",
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.primary,
+      )
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        ReaderThemeMode.entries.forEach { mode ->
+          val selected = preferences.readerTheme == mode
+          Surface(
+            modifier = Modifier
+              .weight(1f)
+              .testTag("settings_theme_${mode.name.lowercase()}")
+              .clickable { onSelectTheme(mode) },
+            shape = RoundedCornerShape(14.dp),
+            color = mode.background,
+            border = BorderStroke(
+              width = if (selected) 2.dp else 1.dp,
+              color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+            ),
+          ) {
+            Column(
+              modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+              horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+              Text(
+                text = "Аа",
+                style = MaterialTheme.typography.titleMedium,
+                color = mode.text,
+                maxLines = 1,
+              )
+              Spacer(modifier = Modifier.height(2.dp))
+              Text(
+                text = mode.title,
+                style = MaterialTheme.typography.labelSmall,
+                color = mode.mutedText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
+        }
+      }
+
+      Text(
+        text = "Режим чтения",
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.primary,
+      )
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        ReaderReadingMode.entries.forEach { mode ->
+          val selected = preferences.readingMode == mode
+          Surface(
+            modifier = Modifier
+              .weight(1f)
+              .testTag("settings_reading_mode_${mode.name.lowercase()}")
+              .clickable { onSelectReadingMode(mode) },
+            shape = RoundedCornerShape(16.dp),
+            color = if (selected) {
+              MaterialTheme.colorScheme.primaryContainer
+            } else {
+              MaterialTheme.colorScheme.surfaceContainerLow
+            },
+            border = BorderStroke(
+              width = if (selected) 2.dp else 1.dp,
+              color = if (selected) {
+                MaterialTheme.colorScheme.primary
+              } else {
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
+              },
+            ),
+          ) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.Center,
+            ) {
+              Icon(
+                imageVector = if (mode == ReaderReadingMode.PAGES) {
+                  Icons.AutoMirrored.Filled.MenuBook
+                } else {
+                  Icons.Default.ViewDay
+                },
+                contentDescription = null,
+                tint = if (selected) {
+                  MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                  MaterialTheme.colorScheme.onSurfaceVariant
+                },
+              )
+              Spacer(modifier = Modifier.widthIn(min = 8.dp).padding(start = 8.dp))
+              Text(
+                text = mode.title,
+                style = MaterialTheme.typography.titleSmall.copy(
+                  fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                ),
+                color = if (selected) {
+                  MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                  MaterialTheme.colorScheme.onSurface
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
         }
       }
 
@@ -111,7 +254,7 @@ fun SettingsScreen(
           SettingSwitchRow(
             icon = Icons.Default.Palette,
             title = "Динамические цвета Material You",
-            subtitle = "Подстраивает акценты интерфейса под обои Pixel",
+            subtitle = "Подстраивает акценты под обои Pixel вместо темы книги",
             checked = preferences.useDynamicColor,
             onCheckedChange = onToggleDynamicColor,
             testTag = "switch_dynamic_color",
@@ -183,23 +326,36 @@ fun SettingsScreen(
         }
       }
 
-      Spacer(modifier = Modifier.height(24.dp))
+      Spacer(modifier = Modifier.height(12.dp))
     }
   }
 }
 
 @Composable
-private fun StatBlock(value: String, label: String) {
-  Column(horizontalAlignment = Alignment.CenterHorizontally) {
+private fun StatBlock(
+  value: String,
+  label: String,
+  modifier: Modifier = Modifier,
+) {
+  Column(
+    modifier = modifier,
+    horizontalAlignment = Alignment.CenterHorizontally,
+  ) {
     Text(
       text = value,
-      style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+      style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
       color = MaterialTheme.colorScheme.onSurface,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      textAlign = TextAlign.Center,
     )
     Text(
       text = label,
       style = MaterialTheme.typography.labelSmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      textAlign = TextAlign.Center,
     )
   }
 }

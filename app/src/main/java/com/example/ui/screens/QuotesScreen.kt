@@ -7,9 +7,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,7 +21,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FormatQuote
@@ -35,7 +39,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -49,7 +52,7 @@ import com.example.data.local.QuoteEntity
 @Composable
 fun QuotesScreen(
   quotes: List<QuoteEntity>,
-  onOpenQuoteInBook: (bookId: Long, unitIndex: Int, paragraphIndex: Int) -> Unit,
+  onOpenQuoteInBook: (bookId: Long, unitIndex: Int, paragraphIndex: Int, charOffset: Int) -> Unit,
   onDeleteQuote: (Long) -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -69,17 +72,21 @@ fun QuotesScreen(
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(horizontal = 20.dp, vertical = 14.dp),
+          .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 10.dp),
       ) {
         Text(
           text = "Цитаты",
-          style = MaterialTheme.typography.displaySmall,
+          style = MaterialTheme.typography.headlineMedium,
           color = MaterialTheme.colorScheme.onBackground,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
         )
         Text(
           text = if (quotes.isEmpty()) "Избранные мысли из книг" else "Сохранено цитат: ${quotes.size}",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
         )
       }
 
@@ -88,7 +95,8 @@ fun QuotesScreen(
           modifier = Modifier
             .weight(1f)
             .fillMaxWidth()
-            .padding(horizontal = 32.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 32.dp, vertical = 20.dp),
           horizontalAlignment = Alignment.CenterHorizontally,
           verticalArrangement = Arrangement.Center,
         ) {
@@ -128,16 +136,21 @@ fun QuotesScreen(
         ) {
           items(quotes, key = { it.id }) { quote ->
             val tagColor = when (quote.colorTag) {
-              "SAGE" -> Color(0xFF4F6B52)
-              "AMBER" -> Color(0xFFB37A1E)
-              else -> Color(0xFF9C422E)
+              "SAGE" -> MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
+              "AMBER" -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+              else -> MaterialTheme.colorScheme.primary
             }
             Card(
               modifier = Modifier
                 .fillMaxWidth()
                 .testTag("quote_card_${quote.id}")
                 .clickable {
-                  onOpenQuoteInBook(quote.bookId, quote.unitIndex, quote.paragraphIndex)
+                  onOpenQuoteInBook(
+                    quote.bookId,
+                    quote.locator.chapterIndex,
+                    quote.locator.paragraphIndex,
+                    quote.locator.charOffset,
+                  )
                 },
               shape = RoundedCornerShape(18.dp),
               colors = CardDefaults.cardColors(
@@ -146,11 +159,14 @@ fun QuotesScreen(
               border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
             ) {
               Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.Top) {
+                Row(
+                  modifier = Modifier.height(IntrinsicSize.Min),
+                  verticalAlignment = Alignment.Top,
+                ) {
                   Box(
                     modifier = Modifier
                       .width(4.dp)
-                      .height(48.dp)
+                      .fillMaxHeight()
                       .clip(RoundedCornerShape(2.dp))
                       .background(tagColor),
                   )

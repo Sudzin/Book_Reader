@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <genre>prose_classic</genre>
+      <author>
+        <first-name>Антон</first-name>
+        <last-name>Чехов</last-name>
+      </author>
+      <book-title>Тестовый рассказ</book-title>
+      <lang>ru</lang>
+    </title-info>
+  </description>
+  <body>
+    <section>
+      <title><p>Глава 1. Утро</p></title>
+      <epigraph><p>Солнце взошло над тихим садом.</p></epigraph>
+      <p>Первый абзац первой главы с русским текстом для проверки парсера FB2.</p>
+      <p>Второй абзац первой главы продолжается спокойно и ясно.</p>
+    </section>
+    <section>
+      <title><p>Глава 2. Вечер</p></title>
+      <p>Первый абзац второй главы описывает сумерки у реки.</p>
+      <cite><p>Цитата из второй главы.</p></cite>
+    </section>
+  </body>
+</FictionBook>

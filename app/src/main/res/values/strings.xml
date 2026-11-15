@@ -19,4 +19,5 @@
     <string name="cd_tts">Озвучить текст</string>
     <string name="cd_delete_book">Удалить книгу</string>
     <string name="cd_share_quote">Поделиться цитатой</string>
+    <string name="cd_search_in_book">Поиск по тексту книги</string>
 </resources>

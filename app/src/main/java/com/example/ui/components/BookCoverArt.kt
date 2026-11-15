@@ -79,55 +79,44 @@ fun BookCoverArt(
         modifier = Modifier
           .fillMaxSize()
           .background(Brush.verticalGradient(listOf(baseColor, darkShade)))
-          .padding(10.dp),
-        verticalArrangement = Arrangement.SpaceBetween,
+          .padding(start = 8.dp, end = 8.dp, top = 26.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.Bottom,
       ) {
-        Surface(
-          color = Color.White.copy(alpha = 0.2f),
-          shape = RoundedCornerShape(6.dp),
-        ) {
-          Text(
-            text = book.format,
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-          )
-        }
-        Column(modifier = Modifier.fillMaxWidth()) {
-          Text(
-            text = book.title,
-            style = MaterialTheme.typography.titleSmall.copy(
-              fontWeight = FontWeight.SemiBold,
-              lineHeight = 16.sp,
-            ),
-            color = Color.White,
-            maxLines = 4,
-            overflow = TextOverflow.Ellipsis,
-          )
-          Spacer(modifier = Modifier.height(4.dp))
-          Text(
-            text = book.author,
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.White.copy(alpha = 0.82f),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-          )
-        }
+        Text(
+          text = book.title,
+          style = MaterialTheme.typography.labelMedium.copy(
+            fontWeight = FontWeight.SemiBold,
+            lineHeight = 14.sp,
+          ),
+          color = Color(0xFFFDF8F0),
+          maxLines = 3,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+          text = book.author,
+          style = MaterialTheme.typography.labelSmall,
+          color = Color(0xFFFDF8F0).copy(alpha = 0.8f),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
       }
     }
 
     Surface(
-      color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+      color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
       shape = RoundedCornerShape(6.dp),
       modifier = Modifier
         .align(Alignment.TopEnd)
-        .padding(6.dp),
+        .padding(5.dp),
     ) {
       Text(
         text = book.format,
         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
         color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        maxLines = 1,
+        softWrap = false,
+        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
       )
     }
   }

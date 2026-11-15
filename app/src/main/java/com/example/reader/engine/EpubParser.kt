@@ -18,79 +18,100 @@ object EpubParser {
     val navZipPath: String?,
   )
 
-  fun extractMetadata(file: File, fallbackTitle: String): ParsedBookMetadata {
-    ZipFile(file).use { zip ->
-      val opf = parseOpf(zip, fallbackTitle)
-      val coverBytes = opf.coverZipPath?.let { path ->
-        findZipEntry(zip, path)?.let { entry -> zip.getInputStream(entry).use { it.readBytes() } }
-      }
-      return ParsedBookMetadata(
-        title = opf.title,
-        author = opf.author,
-        coverBytes = coverBytes,
-        totalUnits = opf.spinePaths.size.coerceAtLeast(1),
-      )
+  fun parseForImport(file: File, fallbackTitle: String): Pair<ParsedBookMetadata, LoadedBookContent.Reflowable> {
+    if (!file.exists() || file.length() == 0L) {
+      throw BookParseException("Файл EPUB пуст или недоступен.")
     }
-  }
+    val zip = try {
+      ZipFile(file)
+    } catch (e: Throwable) {
+      throw BookParseException("Файл EPUB повреждён или не является корректным архивом.", e)
+    }
 
-  fun parse(file: File, fallbackTitle: String): LoadedBookContent.Reflowable {
-    ZipFile(file).use { zip ->
-      val opf = parseOpf(zip, fallbackTitle)
-      val tocTitleByHref = buildTocMap(zip, opf)
-
-      val chapters = mutableListOf<BookChapter>()
-      opf.spinePaths.forEachIndexed { _, zipPath ->
-        val entry = findZipEntry(zip, zipPath) ?: return@forEachIndexed
-        val html = zip.getInputStream(entry).use { it.readBytes().toString(Charsets.UTF_8) }
-        val paragraphs = parseXhtmlParagraphs(html)
-        if (paragraphs.isNotEmpty()) {
-          val normalized = zipPath.lowercase()
-          val matchedToc = tocTitleByHref.entries.firstOrNull { (href, _) ->
-            normalized.endsWith(href.lowercase())
-          }?.value
-          val headingText = paragraphs.firstOrNull {
-            it.kind == ParagraphKind.HEADING || it.kind == ParagraphKind.SUBHEADING
-          }?.text
-          val chapterTitle = matchedToc
-            ?: headingText?.take(80)
-            ?: "Глава ${chapters.size + 1}"
-          chapters.add(
-            BookChapter(
-              index = chapters.size,
-              title = chapterTitle,
-              paragraphs = paragraphs,
-            )
-          )
+    return try {
+      zip.use { archive ->
+        val opf = parseOpf(archive, fallbackTitle)
+        val coverBytes = opf.coverZipPath?.let { path ->
+          runCatching {
+            findZipEntry(archive, path)?.let { entry ->
+              archive.getInputStream(entry).use { it.readBytes() }
+            }
+          }.getOrNull()
         }
-      }
+        val tocTitleByHref = runCatching { buildTocMap(archive, opf) }.getOrDefault(emptyMap())
 
-      val finalChapters = chapters.ifEmpty {
-        listOf(
-          BookChapter(
-            index = 0,
-            title = opf.title,
-            paragraphs = listOf(BookParagraph(0, "Не удалось извлечь содержимое EPUB.", ParagraphKind.BODY)),
-          )
+        val chapters = mutableListOf<BookChapter>()
+        opf.spinePaths.forEach { zipPath ->
+          val entry = findZipEntry(archive, zipPath) ?: return@forEach
+          val html = runCatching {
+            archive.getInputStream(entry).use { it.readBytes().toString(Charsets.UTF_8) }
+          }.getOrNull() ?: return@forEach
+          val paragraphs = parseXhtmlParagraphs(html)
+          if (paragraphs.isNotEmpty()) {
+            val normalized = zipPath.lowercase()
+            val matchedToc = tocTitleByHref.entries.firstOrNull { (href, _) ->
+              normalized.endsWith(href.lowercase())
+            }?.value?.trim()?.takeIf { it.isNotEmpty() }
+            val headingText = paragraphs.firstOrNull {
+              it.kind == ParagraphKind.HEADING || it.kind == ParagraphKind.SUBHEADING
+            }?.text?.trim()?.takeIf { it.isNotEmpty() }
+            val chapterTitle = matchedToc
+              ?: headingText?.take(80)
+              ?: "Часть ${chapters.size + 1}"
+            chapters.add(
+              BookChapter(
+                index = chapters.size,
+                title = chapterTitle,
+                paragraphs = paragraphs,
+              )
+            )
+          }
+        }
+
+        if (chapters.isEmpty() || chapters.sumOf { ch -> ch.paragraphs.sumOf { it.text.length } } == 0) {
+          throw BookParseException("Файл EPUB пуст или не содержит читаемого текста.")
+        }
+
+        val toc = TocFilter.filterToc(
+          entries = chapters.map { TocEntry(it.title, it.index) },
+          bookTitle = opf.title,
+          bookAuthor = opf.author,
         )
+        val content = ChapterMetricsBuilder.buildReflowable(chapters, toc)
+        val meta = ParsedBookMetadata(
+          title = opf.title,
+          author = opf.author,
+          coverBytes = coverBytes,
+          totalUnits = content.chapters.size.coerceAtLeast(1),
+          totalChars = content.totalChars,
+        )
+        meta to content
       }
-      val toc = finalChapters.map { TocEntry(it.title, it.index) }
-      return LoadedBookContent.Reflowable(finalChapters, toc)
+    } catch (e: BookParseException) {
+      throw e
+    } catch (t: Throwable) {
+      throw BookParseException("Не удалось прочитать EPUB: файл повреждён.", t)
     }
   }
+
+  fun parse(file: File, fallbackTitle: String): LoadedBookContent.Reflowable =
+    parseForImport(file, fallbackTitle).second
 
   private fun parseOpf(zip: ZipFile, fallbackTitle: String): OpfPackage {
     val containerEntry = findZipEntry(zip, "META-INF/container.xml")
     var opfPath: String? = null
     if (containerEntry != null) {
-      zip.getInputStream(containerEntry).use { stream ->
-        val parser = newParser(stream)
-        var ev = parser.eventType
-        while (ev != XmlPullParser.END_DOCUMENT) {
-          if (ev == XmlPullParser.START_TAG && parser.name.endsWith("rootfile", ignoreCase = true)) {
-            opfPath = parser.getAttributeValue(null, "full-path")
-            if (!opfPath.isNullOrBlank()) break
+      runCatching {
+        zip.getInputStream(containerEntry).use { stream ->
+          val parser = newParser(stream)
+          var ev = parser.eventType
+          while (ev != XmlPullParser.END_DOCUMENT) {
+            if (ev == XmlPullParser.START_TAG && parser.name.endsWith("rootfile", ignoreCase = true)) {
+              opfPath = parser.getAttributeValue(null, "full-path")
+              if (!opfPath.isNullOrBlank()) break
+            }
+            ev = runCatching { parser.next() }.getOrDefault(XmlPullParser.END_DOCUMENT)
           }
-          ev = runCatching { parser.next() }.getOrDefault(XmlPullParser.END_DOCUMENT)
         }
       }
     }
@@ -98,12 +119,12 @@ object EpubParser {
       opfPath = zip.entries().asSequence().firstOrNull { it.name.endsWith(".opf", ignoreCase = true) }?.name
     }
     if (opfPath.isNullOrBlank()) {
-      return OpfPackage(fallbackTitle, "Автор не указан", null, emptyList(), null, null)
+      throw BookParseException("Файл EPUB повреждён: отсутствует структура книги (OPF).")
     }
 
     val opfDir = opfPath.substringBeforeLast('/', "")
     val opfEntry = findZipEntry(zip, opfPath)
-      ?: return OpfPackage(fallbackTitle, "Автор не указан", null, emptyList(), null, null)
+      ?: throw BookParseException("Файл EPUB повреждён: не найден файл оглавления (OPF).")
 
     var title = ""
     var author = ""

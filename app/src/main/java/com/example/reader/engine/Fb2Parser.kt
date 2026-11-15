@@ -11,50 +11,72 @@ import java.util.zip.ZipInputStream
 
 object Fb2Parser {
 
-  fun extractMetadata(file: File, fallbackTitle: String): ParsedBookMetadata {
+  fun parseForImport(file: File, fallbackTitle: String): Pair<ParsedBookMetadata, LoadedBookContent.Reflowable> {
+    if (!file.exists() || file.length() == 0L) {
+      throw BookParseException("Файл FB2 пуст или недоступен.")
+    }
     val xmlBytes = readFb2XmlBytes(file)
-    val parsed = parseFb2(xmlBytes, fallbackTitle)
-    return ParsedBookMetadata(
+    if (xmlBytes.isEmpty()) {
+      throw BookParseException("Файл FB2 пуст.")
+    }
+    val parsed = try {
+      parseFb2(xmlBytes, fallbackTitle)
+    } catch (e: BookParseException) {
+      throw e
+    } catch (t: Throwable) {
+      throw BookParseException("Файл FB2 повреждён или имеет неверный XML-формат.", t)
+    }
+    val chapters = parsed.chapters
+    if (chapters.isEmpty() || chapters.sumOf { ch -> ch.paragraphs.sumOf { it.text.length } } == 0) {
+      throw BookParseException("Файл FB2 повреждён или не содержит читаемого текста.")
+    }
+    val toc = TocFilter.filterToc(
+      entries = chapters.map { TocEntry(it.title, it.index) },
+      bookTitle = parsed.title,
+      bookAuthor = parsed.author,
+    )
+    val content = ChapterMetricsBuilder.buildReflowable(chapters, toc)
+    val meta = ParsedBookMetadata(
       title = parsed.title,
       author = parsed.author,
       coverBytes = parsed.coverBytes,
-      totalUnits = parsed.chapters.size.coerceAtLeast(1),
+      totalUnits = content.chapters.size.coerceAtLeast(1),
+      totalChars = content.totalChars,
     )
+    return meta to content
   }
 
-  fun parse(file: File, fallbackTitle: String): LoadedBookContent.Reflowable {
-    val xmlBytes = readFb2XmlBytes(file)
-    val parsed = parseFb2(xmlBytes, fallbackTitle)
-    val chapters = parsed.chapters.ifEmpty {
-      listOf(
-        BookChapter(
-          index = 0,
-          title = parsed.title,
-          paragraphs = listOf(BookParagraph(0, "Не удалось извлечь текст книги.", ParagraphKind.BODY)),
-        )
-      )
-    }
-    val toc = chapters.map { TocEntry(it.title, it.index) }
-    return LoadedBookContent.Reflowable(chapters, toc)
-  }
+  fun parse(file: File, fallbackTitle: String): LoadedBookContent.Reflowable =
+    parseForImport(file, fallbackTitle).second
 
   private fun readFb2XmlBytes(file: File): ByteArray {
-    val raw = file.readBytes()
+    val raw = try {
+      file.readBytes()
+    } catch (t: Throwable) {
+      throw BookParseException("Не удалось прочитать файл FB2.", t)
+    }
     if (raw.size >= 2 && raw[0] == 0x50.toByte() && raw[1] == 0x4B.toByte()) {
-      ZipInputStream(ByteArrayInputStream(raw)).use { zis ->
-        var entry = zis.nextEntry
-        while (entry != null) {
-          if (!entry.isDirectory && entry.name.lowercase().endsWith(".fb2")) {
-            return zis.readBytes()
+      return try {
+        ZipInputStream(ByteArrayInputStream(raw)).use { zis ->
+          var firstEntryBytes: ByteArray? = null
+          var entry = zis.nextEntry
+          while (entry != null) {
+            if (!entry.isDirectory) {
+              if (entry.name.lowercase().endsWith(".fb2")) {
+                return zis.readBytes()
+              }
+              if (firstEntryBytes == null) {
+                firstEntryBytes = zis.readBytes()
+              }
+            }
+            entry = zis.nextEntry
           }
-          entry = zis.nextEntry
+          firstEntryBytes ?: throw BookParseException("Архив FB2 пуст или не содержит файла книги.")
         }
-      }
-      ZipInputStream(ByteArrayInputStream(raw)).use { zis ->
-        val first = zis.nextEntry
-        if (first != null && !first.isDirectory) {
-          return zis.readBytes()
-        }
+      } catch (e: BookParseException) {
+        throw e
+      } catch (t: Throwable) {
+        throw BookParseException("Архив FB2 повреждён и не может быть открыт.", t)
       }
     }
     return raw
@@ -68,6 +90,13 @@ object Fb2Parser {
   )
 
   private fun detectXmlCharset(bytes: ByteArray): Charset {
+    if (bytes.size >= 2) {
+      if (bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) return Charsets.UTF_16LE
+      if (bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) return Charsets.UTF_16BE
+    }
+    if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+      return Charsets.UTF_8
+    }
     val head = String(bytes, 0, bytes.size.coerceAtMost(256), Charsets.ISO_8859_1)
     val match = Regex("""encoding=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(head)
     val enc = match?.groupValues?.getOrNull(1)?.trim()
@@ -119,7 +148,7 @@ object Fb2Parser {
     fun flushChapter() {
       if (activeParagraphs.isNotEmpty()) {
         val idx = chapters.size
-        val title = activeChapterTitle.ifBlank { "Раздел ${idx + 1}" }
+        val title = activeChapterTitle.trim().ifBlank { "Часть ${idx + 1}" }
         chapters.add(BookChapter(idx, title, activeParagraphs.toList()))
         activeParagraphs = mutableListOf()
         activeChapterTitle = ""

@@ -10,42 +10,75 @@ import java.io.File
 
 object PdfParser {
 
-  fun extractMetadata(file: File, fallbackTitle: String): ParsedBookMetadata {
-    ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
-      PdfRenderer(fd).use { renderer ->
-        val pageCount = renderer.pageCount.coerceAtLeast(1)
-        val coverBytes = if (renderer.pageCount > 0) {
-          renderer.openPage(0).use { page ->
-            val targetW = 420
-            val targetH = ((page.height.toFloat() / page.width.coerceAtLeast(1)) * targetW)
-              .toInt()
-              .coerceIn(200, 720)
-            val bmp = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
-            Canvas(bmp).drawColor(Color.WHITE)
-            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            ByteArrayOutputStream().use { out ->
-              bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
-              bmp.recycle()
-              out.toByteArray()
-            }
+  fun parseForImport(file: File, fallbackTitle: String): Pair<ParsedBookMetadata, LoadedBookContent.PdfDocumentContent> {
+    if (!file.exists() || file.length() == 0L) {
+      throw BookParseException("PDF-файл пуст или недоступен.")
+    }
+    return try {
+      ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+        PdfRenderer(fd).use { renderer ->
+          val pageCount = renderer.pageCount
+          if (pageCount <= 0) {
+            throw BookParseException("PDF-файл не содержит страниц.")
           }
-        } else {
-          null
+          val coverBytes = runCatching {
+            renderer.openPage(0).use { page ->
+              val targetW = 420
+              val targetH = ((page.height.toFloat() / page.width.coerceAtLeast(1)) * targetW)
+                .toInt()
+                .coerceIn(200, 720)
+              val bmp = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+              Canvas(bmp).drawColor(Color.WHITE)
+              page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+              ByteArrayOutputStream().use { out ->
+                bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                bmp.recycle()
+                out.toByteArray()
+              }
+            }
+          }.getOrNull()
+          val content = buildDescriptor(file, pageCount)
+          val meta = ParsedBookMetadata(
+            title = fallbackTitle,
+            author = "PDF документ • $pageCount стр.",
+            coverBytes = coverBytes,
+            totalUnits = pageCount,
+            totalChars = 0L,
+          )
+          meta to content
         }
-        return ParsedBookMetadata(
-          title = fallbackTitle,
-          author = "PDF документ • $pageCount стр.",
-          coverBytes = coverBytes,
-          totalUnits = pageCount,
-        )
       }
+    } catch (e: BookParseException) {
+      throw e
+    } catch (e: SecurityException) {
+      throw BookParseException("PDF-файл защищён паролем и не может быть открыт.", e)
+    } catch (t: Throwable) {
+      throw BookParseException("PDF-файл повреждён или имеет неподдерживаемый формат.", t)
     }
   }
 
   fun loadDescriptor(file: File): LoadedBookContent.PdfDocumentContent {
-    val count = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
-      PdfRenderer(fd).use { it.pageCount.coerceAtLeast(1) }
+    if (!file.exists() || file.length() == 0L) {
+      throw BookParseException("PDF-файл пуст или недоступен.")
     }
+    val count = try {
+      ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+        PdfRenderer(fd).use { renderer ->
+          if (renderer.pageCount <= 0) throw BookParseException("PDF-файл не содержит страниц.")
+          renderer.pageCount
+        }
+      }
+    } catch (e: BookParseException) {
+      throw e
+    } catch (e: SecurityException) {
+      throw BookParseException("PDF-файл защищён паролем и не может быть открыт.", e)
+    } catch (t: Throwable) {
+      throw BookParseException("PDF-файл повреждён или имеет неподдерживаемый формат.", t)
+    }
+    return buildDescriptor(file, count)
+  }
+
+  private fun buildDescriptor(file: File, count: Int): LoadedBookContent.PdfDocumentContent {
     val step = when {
       count <= 20 -> 1
       count <= 100 -> 5

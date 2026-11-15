@@ -8,22 +8,32 @@ import java.nio.charset.CodingErrorAction
 object TxtParser {
 
   private val chapterRegex = Regex(
-    pattern = """^(глава|часть|раздел|том|книга|chapter|part|book|пролог|эпилог|введение|заключение)\b.*$|^[IVXLCDM]{1,7}\.?$""",
+    pattern = """^(глава|часть|раздел|том|книга|chapter|part|book|пролог|эпилог|введение|заключение)(?:$|[\s.:—–-].*$)|^[IVXLCDM]{1,7}\.?$""",
     option = RegexOption.IGNORE_CASE,
   )
 
-  fun extractMetadata(file: File, fallbackTitle: String): ParsedBookMetadata {
+  fun parseForImport(file: File, fallbackTitle: String): Pair<ParsedBookMetadata, LoadedBookContent.Reflowable> {
     val content = parse(file)
-    return ParsedBookMetadata(
+    val meta = ParsedBookMetadata(
       title = fallbackTitle,
       author = "Локальный текст",
       coverBytes = null,
       totalUnits = content.chapters.size.coerceAtLeast(1),
+      totalChars = content.totalChars,
     )
+    return meta to content
   }
 
   fun parse(file: File): LoadedBookContent.Reflowable {
-    val text = decodeBytesSmart(file.readBytes())
+    if (!file.exists() || file.length() == 0L) {
+      throw BookParseException("Текстовый файл пуст или недоступен.")
+    }
+    val rawBytes = try {
+      file.readBytes()
+    } catch (t: Throwable) {
+      throw BookParseException("Не удалось прочитать текстовый файл.", t)
+    }
+    val text = decodeBytesSmart(rawBytes)
     val rawLines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
 
     val blocks = mutableListOf<String>()
@@ -45,22 +55,18 @@ object TxtParser {
     }
 
     if (blocks.isEmpty()) {
-      val emptyChapter = BookChapter(
-        index = 0,
-        title = "Текст",
-        paragraphs = listOf(BookParagraph(0, "Файл пуст.", ParagraphKind.BODY)),
-      )
-      return LoadedBookContent.Reflowable(listOf(emptyChapter), listOf(TocEntry("Текст", 0)))
+      throw BookParseException("Текстовый файл пуст или не содержит читаемого текста.")
     }
 
     val chapters = mutableListOf<BookChapter>()
-    var currentTitle = "Начало"
+    var currentTitle = "Часть 1"
     var currentParagraphs = mutableListOf<BookParagraph>()
 
     fun flushChapter() {
       if (currentParagraphs.isNotEmpty()) {
         val idx = chapters.size
-        chapters.add(BookChapter(idx, currentTitle, currentParagraphs.toList()))
+        val resolvedTitle = currentTitle.trim().ifBlank { "Часть ${idx + 1}" }
+        chapters.add(BookChapter(idx, resolvedTitle, currentParagraphs.toList()))
         currentParagraphs = mutableListOf()
       }
     }
@@ -84,29 +90,52 @@ object TxtParser {
     }
     flushChapter()
 
-    val toc = chapters.map { TocEntry(it.title, it.index) }
-    return LoadedBookContent.Reflowable(chapters, toc)
+    val toc = TocFilter.filterToc(
+      entries = chapters.map { TocEntry(it.title, it.index) },
+      bookTitle = "",
+      bookAuthor = "",
+    )
+    return ChapterMetricsBuilder.buildReflowable(chapters, toc)
   }
 
   private fun decodeBytesSmart(bytes: ByteArray): String {
     if (bytes.isEmpty()) return ""
-    if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
-      return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+    val decoded = when {
+      bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte() ->
+        String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+      bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() ->
+        String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+      bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() ->
+        String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+      else -> {
+        if (bytes.any { it == 0.toByte() }) {
+          throw BookParseException("Файл повреждён или содержит двоичные данные вместо текста.")
+        }
+        try {
+          val decoder = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+          decoder.decode(ByteBuffer.wrap(bytes)).toString()
+        } catch (_: Exception) {
+          val cp1251 = runCatching { Charset.forName("windows-1251") }.getOrDefault(Charsets.ISO_8859_1)
+          String(bytes, cp1251)
+        }
+      }
     }
-    if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
-      return String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+
+    if (decoded.isNotEmpty()) {
+      val sampleLen = decoded.length.coerceAtMost(2048)
+      var badChars = 0
+      for (i in 0 until sampleLen) {
+        val c = decoded[i]
+        if ((c < ' ' && c != '\n' && c != '\r' && c != '\t') || c == '\uFFFD') {
+          badChars++
+        }
+      }
+      if (badChars * 100 / sampleLen > 15) {
+        throw BookParseException("Файл повреждён или не является текстовым документом.")
+      }
     }
-    if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
-      return String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
-    }
-    return try {
-      val decoder = Charsets.UTF_8.newDecoder()
-        .onMalformedInput(CodingErrorAction.REPORT)
-        .onUnmappableCharacter(CodingErrorAction.REPORT)
-      decoder.decode(ByteBuffer.wrap(bytes)).toString()
-    } catch (_: Exception) {
-      val cp1251 = runCatching { Charset.forName("windows-1251") }.getOrDefault(Charsets.ISO_8859_1)
-      String(bytes, cp1251)
-    }
+    return decoded
   }
 }
