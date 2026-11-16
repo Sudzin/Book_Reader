@@ -1,18 +1,22 @@
 package com.example
 
 import android.Manifest
+import android.app.Application
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.speech.tts.Voice
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.BookEntity
+import com.example.data.local.PreferencesRepository
 import com.example.data.local.ReaderPreferences
 import com.example.reader.engine.BookChapter
 import com.example.reader.engine.BookParagraph
@@ -20,23 +24,31 @@ import com.example.reader.engine.ChapterMetricsBuilder
 import com.example.reader.engine.Locator
 import com.example.reader.engine.ParagraphKind
 import com.example.reader.engine.TocEntry
+import com.example.reader.tts.AndroidTtsVoiceGateway
+import com.example.reader.tts.SentenceSplitter
 import com.example.reader.tts.SpeechSynthesizer
 import com.example.reader.tts.TtsPlaybackController
 import com.example.reader.tts.TtsPlaybackService
 import com.example.reader.tts.TtsPlaybackState
 import com.example.reader.tts.TtsProgressSink
 import com.example.reader.tts.TtsServiceHost
+import com.example.reader.tts.TtsVoiceGateway
+import com.example.reader.tts.TtsVoiceOption
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.ListayTheme
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -46,22 +58,34 @@ class TtsPlaybackTest {
   @get:Rule
   val composeRule = createComposeRule()
 
-  private class FakeSynthesizer : SpeechSynthesizer {
+  private class FakeSynthesizer(
+    private val initSuccess: Boolean = true,
+  ) : SpeechSynthesizer {
     private var activeListener: SpeechSynthesizer.Listener? = null
     val spokenUtterances = mutableListOf<Triple<String, String, Float>>()
     var stopCount = 0
     var lastSpeed = 1.0f
+    var lastPitch = 1.0f
+    var lastVoiceName: String? = null
 
     override fun setListener(listener: SpeechSynthesizer.Listener?) {
       this.activeListener = listener
     }
 
     override fun initialize(onReady: (Boolean) -> Unit) {
-      onReady(true)
+      onReady(initSuccess)
     }
 
-    override fun speak(text: String, utteranceId: String, speechRate: Float) {
+    override fun speak(
+      text: String,
+      utteranceId: String,
+      speechRate: Float,
+      pitch: Float,
+      voiceName: String?,
+    ) {
       lastSpeed = speechRate
+      lastPitch = pitch
+      lastVoiceName = voiceName
       spokenUtterances.add(Triple(text, utteranceId, speechRate))
       activeListener?.onUtteranceStart(utteranceId)
     }
@@ -69,6 +93,16 @@ class TtsPlaybackTest {
     override fun setSpeechRate(speechRate: Float) {
       lastSpeed = speechRate
     }
+
+    override fun setPitch(pitch: Float) {
+      lastPitch = pitch
+    }
+
+    override fun setVoice(voiceName: String?) {
+      lastVoiceName = voiceName
+    }
+
+    override fun getRussianVoices(): List<TtsVoiceOption> = emptyList()
 
     override fun stop() {
       stopCount++
@@ -80,6 +114,60 @@ class TtsPlaybackTest {
       val last = spokenUtterances.lastOrNull() ?: return
       activeListener?.onUtteranceDone(last.second)
     }
+
+    fun failLastUtterance(message: String) {
+      val last = spokenUtterances.lastOrNull() ?: return
+      activeListener?.onUtteranceError(last.second, message)
+    }
+  }
+
+  private class FakeVoiceGateway(
+    var voicesResult: Result<List<TtsVoiceOption>> = Result.success(
+      listOf(
+        TtsVoiceOption(
+          name = "ru-ru-x-dfc-local",
+          displayName = "Русский (DFC)",
+          localeTag = "ru-RU",
+          isNetworkRequired = false,
+          quality = Voice.QUALITY_HIGH,
+        ),
+        TtsVoiceOption(
+          name = "ru-ru-x-ruf-network",
+          displayName = "Русский (RUF)",
+          localeTag = "ru-RU",
+          isNetworkRequired = true,
+          quality = Voice.QUALITY_VERY_HIGH,
+        ),
+      )
+    ),
+    var sampleResult: Result<Unit> = Result.success(Unit),
+  ) : TtsVoiceGateway {
+    var lastSampleRate: Float? = null
+    var lastSamplePitch: Float? = null
+    var lastSampleVoice: String? = null
+    var sampleCallCount: Int = 0
+
+    override fun loadRussianVoices(onResult: (Result<List<TtsVoiceOption>>) -> Unit) {
+      onResult(voicesResult)
+    }
+
+    override fun speakSample(
+      text: String,
+      speechRate: Float,
+      pitch: Float,
+      voiceName: String?,
+      onFinished: (Result<Unit>) -> Unit,
+    ) {
+      sampleCallCount++
+      lastSampleRate = speechRate
+      lastSamplePitch = pitch
+      lastSampleVoice = voiceName
+      onFinished(sampleResult)
+    }
+
+    override fun stopSample() = Unit
+
+    override fun release() = Unit
   }
 
   private fun sampleContent() = ChapterMetricsBuilder.buildReflowable(
@@ -137,6 +225,16 @@ class TtsPlaybackTest {
   }
 
   @Test
+  fun `SentenceSplitter splits multi-sentence Russian paragraphs cleanly`() {
+    val paragraph = "Старый дуб стоял на краю леса. Неужели буря сломает его? Нет, корни держали крепко!"
+    val sentences = SentenceSplitter.splitIntoSentences(paragraph)
+    assertEquals(3, sentences.size)
+    assertEquals("Старый дуб стоял на краю леса.", sentences[0])
+    assertEquals("Неужели буря сломает его?", sentences[1])
+    assertEquals("Нет, корни держали крепко!", sentences[2])
+  }
+
+  @Test
   fun `controller auto-advances across paragraphs and chapters while persisting locators`() {
     val synth = FakeSynthesizer()
     val savedLocators = mutableListOf<Locator>()
@@ -173,10 +271,14 @@ class TtsPlaybackTest {
       startChapterIndex = 0,
       startParagraphIndex = 0,
       speechSpeed = 1.2f,
+      pitch = 1.1f,
+      voiceName = "ru-ru-x-dfc-local",
     )
     assertTrue(started)
     assertEquals(1, serviceStarted)
     assertEquals(1.2f, synth.lastSpeed, 0.01f)
+    assertEquals(1.1f, synth.lastPitch, 0.01f)
+    assertEquals("ru-ru-x-dfc-local", synth.lastVoiceName)
     assertEquals(0, controller.state.value.chapterIndex)
     assertEquals(0, controller.state.value.activeParagraphIndex)
 
@@ -219,6 +321,56 @@ class TtsPlaybackTest {
     assertTrue(savedLocators.contains(Locator(0, 2, 0)))
     assertTrue(savedLocators.contains(Locator(1, 0, 0)))
     assertTrue(savedLocators.contains(Locator(1, 1, 0)))
+  }
+
+  @Test
+  fun `controller propagates clear error message when engine does not respond`() {
+    val failingInitSynth = FakeSynthesizer(initSuccess = false)
+    val controller1 = TtsPlaybackController(synthesizer = failingInitSynth)
+    controller1.startBookPlayback(
+      book = sampleBook(),
+      content = sampleContent(),
+      startChapterIndex = 0,
+      startParagraphIndex = 0,
+      speechSpeed = 1.0f,
+    )
+    assertFalse(controller1.state.value.isActive)
+    assertEquals(AndroidTtsVoiceGateway.MSG_ENGINE_UNAVAILABLE, controller1.state.value.errorMessage)
+
+    val utteranceErrSynth = FakeSynthesizer(initSuccess = true)
+    val controller2 = TtsPlaybackController(synthesizer = utteranceErrSynth)
+    controller2.startBookPlayback(
+      book = sampleBook(),
+      content = sampleContent(),
+      startChapterIndex = 0,
+      startParagraphIndex = 0,
+      speechSpeed = 1.0f,
+    )
+    utteranceErrSynth.failLastUtterance("Выбранный движок синтеза речи не отвечает")
+    assertFalse(controller2.state.value.isPlaying)
+    assertEquals("Выбранный движок синтеза речи не отвечает", controller2.state.value.errorMessage)
+  }
+
+  @Test
+  fun `PreferencesRepository clamps speed and pitch to 0_7_1_3 and stores voice name`() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val repo = PreferencesRepository(context)
+
+    repo.updateTtsSpeed(2.0f)
+    repo.updateTtsPitch(0.4f)
+    repo.updateTtsVoiceName("ru-ru-x-dfc-local")
+    var prefs = repo.preferencesFlow.first()
+    assertEquals(1.3f, prefs.ttsSpeed, 0.01f)
+    assertEquals(0.7f, prefs.ttsPitch, 0.01f)
+    assertEquals("ru-ru-x-dfc-local", prefs.ttsVoiceName)
+
+    repo.updateTtsVoiceName(null)
+    repo.updateTtsPitch(1.0f)
+    repo.updateTtsSpeed(1.0f)
+    prefs = repo.preferencesFlow.first()
+    assertNull(prefs.ttsVoiceName)
+    assertEquals(1.0f, prefs.ttsPitch, 0.01f)
+    assertEquals(1.0f, prefs.ttsSpeed, 0.01f)
   }
 
   @Test
@@ -266,12 +418,16 @@ class TtsPlaybackTest {
   }
 
   @Test
-  fun `SettingsScreen displays TTS speech speed section and triggers callback`() {
+  fun `SettingsScreen displays TTS speed 0_7_1_3, pitch default 1_0, voice picker offline default, and system settings`() {
     var selectedSpeed = 1.0f
+    var selectedPitch = 1.0f
+    var selectedVoice: String? = null
+    val gateway = FakeVoiceGateway()
+
     composeRule.setContent {
       ListayTheme {
         SettingsScreen(
-          preferences = ReaderPreferences(ttsSpeed = 1.0f),
+          preferences = ReaderPreferences(ttsSpeed = 1.0f, ttsPitch = 1.0f, ttsVoiceName = null),
           bookCount = 2,
           quoteCount = 1,
           onSelectTheme = {},
@@ -280,13 +436,81 @@ class TtsPlaybackTest {
           onToggleVolumePaging = {},
           onToggleKeepScreenOn = {},
           onTtsSpeedChanged = { selectedSpeed = it },
+          onTtsPitchChanged = { selectedPitch = it },
+          onTtsVoiceSelected = { selectedVoice = it },
+          voiceGateway = gateway,
         )
       }
     }
 
     composeRule.onNodeWithTag("settings_tts_speed_slider").performScrollTo().assertIsDisplayed()
     composeRule.onNodeWithText("Скорость речи").assertIsDisplayed()
-    composeRule.onNodeWithTag("settings_tts_preset_15").performScrollTo().performClick()
-    assertEquals(1.5f, selectedSpeed, 0.01f)
+    composeRule.onNodeWithTag("settings_tts_preset_13").performScrollTo().performClick()
+    assertEquals(1.3f, selectedSpeed, 0.01f)
+
+    composeRule.onNodeWithTag("settings_tts_pitch_slider").performScrollTo().assertIsDisplayed()
+    composeRule.onNodeWithTag("settings_tts_pitch_value").assertIsDisplayed()
+    composeRule.onNodeWithTag("settings_tts_pitch_preset_12").performScrollTo().performClick()
+    assertEquals(1.2f, selectedPitch, 0.01f)
+
+    // Test sample speech passes speed/pitch/voice
+    composeRule.onNodeWithTag("settings_tts_test_voice_button").performScrollTo().performClick()
+    assertEquals(1, gateway.sampleCallCount)
+    assertEquals(1.0f, gateway.lastSampleRate!!, 0.01f)
+    assertEquals(1.0f, gateway.lastSamplePitch!!, 0.01f)
+
+    // Open voice picker -> offline-only by default, online voice hidden until filter toggled
+    composeRule.onNodeWithTag("settings_tts_choose_voice_button").performScrollTo().performClick()
+    composeRule.onNodeWithTag("voice_option_ru-ru-x-dfc-local").assertIsDisplayed()
+    composeRule.onNodeWithTag("voice_option_ru-ru-x-ruf-network").assertDoesNotExist()
+
+    // Toggle offline filter -> online voice appears with online badge
+    composeRule.onNodeWithTag("voice_picker_offline_chip").performClick()
+    composeRule.onNodeWithTag("voice_picker_list").performScrollToIndex(2)
+    composeRule.onNodeWithTag("voice_option_ru-ru-x-ruf-network").assertIsDisplayed()
+    composeRule.onNodeWithTag(
+      "voice_online_badge_ru-ru-x-ruf-network",
+      useUnmergedTree = true,
+    ).assertIsDisplayed()
+
+    // Select offline voice -> saved
+    composeRule.onNodeWithTag("voice_picker_list").performScrollToIndex(1)
+    composeRule.onNodeWithTag("voice_option_ru-ru-x-dfc-local").performClick()
+    assertEquals("ru-ru-x-dfc-local", selectedVoice)
+
+    // Click system TTS settings -> launches ACTION_TTS_SETTINGS intent
+    composeRule.onNodeWithTag("settings_tts_system_settings_button").performScrollTo().performClick()
+    val app = ApplicationProvider.getApplicationContext<Application>()
+    val launchedIntent = shadowOf(app).nextStartedActivity
+    assertNotNull(launchedIntent)
+    assertEquals("com.android.settings.TTS_SETTINGS", launchedIntent.action)
+  }
+
+  @Test
+  fun `SettingsScreen shows clear error banner when selected TTS engine does not respond`() {
+    val unresponsiveMsg = "Выбранный движок синтеза речи не отвечает"
+    val gateway = FakeVoiceGateway(
+      sampleResult = Result.failure(IllegalStateException(unresponsiveMsg)),
+    )
+
+    composeRule.setContent {
+      ListayTheme {
+        SettingsScreen(
+          preferences = ReaderPreferences(),
+          bookCount = 1,
+          quoteCount = 0,
+          onSelectTheme = {},
+          onSelectReadingMode = {},
+          onToggleDynamicColor = {},
+          onToggleVolumePaging = {},
+          onToggleKeepScreenOn = {},
+          voiceGateway = gateway,
+        )
+      }
+    }
+
+    composeRule.onNodeWithTag("settings_tts_test_voice_button").performScrollTo().performClick()
+    composeRule.onNodeWithTag("settings_tts_error_banner").performScrollTo().assertIsDisplayed()
+    composeRule.onNodeWithText(unresponsiveMsg).assertIsDisplayed()
   }
 }

@@ -47,6 +47,11 @@ data class PageSlice(
   val endCharInParagraph: Int,
   val isFirstSliceOfParagraph: Boolean,
   val isLastSliceOfParagraph: Boolean,
+  val imagePath: String? = null,
+  val imageWidth: Int = 0,
+  val imageHeight: Int = 0,
+  val imageAlt: String? = null,
+  val imageDisplayHeightDp: Float = 0f,
 )
 
 data class BookPage(
@@ -180,6 +185,19 @@ object ReaderParagraphStyleResolver {
         extraEndPaddingDp = 0.dp,
         extraTopPaddingDp = 0.dp,
         extraBottomPaddingDp = 0.dp,
+      )
+
+      ParagraphKind.IMAGE -> ParagraphLayoutSpec(
+        textStyle = TextStyle(
+          fontFamily = preferences.fontOption.fontFamily,
+          fontSize = (baseSize - 2f).coerceAtLeast(11f).sp,
+          lineHeight = (baseSize * 1.25f).sp,
+        ),
+        textAlign = TextAlign.Center,
+        extraStartPaddingDp = 0.dp,
+        extraEndPaddingDp = 0.dp,
+        extraTopPaddingDp = 12.dp,
+        extraBottomPaddingDp = 12.dp,
       )
     }
   }
@@ -364,6 +382,48 @@ class ChapterPaginator(
       val topExtraPx = with(density) { spec.extraTopPaddingDp.toPx() }
       val bottomExtraPx = with(density) { spec.extraBottomPaddingDp.toPx() }
       val effectiveWidthPx = (viewportWidthPx - horizExtraPx.roundToInt()).coerceAtLeast(48)
+
+      if (paragraph.kind == ParagraphKind.IMAGE) {
+        val gap = if (currentSlices.isEmpty()) 0f else paragraphGapPx
+        val imgW = paragraph.imageWidth
+        val imgH = paragraph.imageHeight
+        val maxImageHeightPx = ((safeHeightPx - topExtraPx - bottomExtraPx) * 0.78f).coerceAtLeast(80f)
+        val targetWidthPx = if (imgW in 1..140 && imgH in 1..140) {
+          (imgW * density.density).coerceAtMost(effectiveWidthPx.toFloat())
+        } else {
+          effectiveWidthPx.toFloat()
+        }
+        val aspect = if (imgW > 0 && imgH > 0) imgH.toFloat() / imgW.toFloat() else 0.65f
+        val desiredImageHeightPx = (targetWidthPx * aspect).coerceIn(32f, maxImageHeightPx)
+        val neededTotalPx = gap + topExtraPx + desiredImageHeightPx + bottomExtraPx
+        if (currentSlices.isNotEmpty() && usedHeightPx + neededTotalPx > safeHeightPx) {
+          flushPage()
+        }
+        val sliceGap = if (currentSlices.isEmpty()) 0f else paragraphGapPx
+        val remainingForImage = (safeHeightPx - usedHeightPx - sliceGap - topExtraPx - bottomExtraPx)
+          .coerceAtLeast(64f)
+        val finalImageHeightPx = desiredImageHeightPx.coerceAtMost(remainingForImage)
+        val displayHeightDp = (finalImageHeightPx / density.density).coerceAtLeast(32f)
+
+        currentSlices.add(
+          PageSlice(
+            paragraphIndex = paragraph.index,
+            kind = paragraph.kind,
+            text = "",
+            startCharInParagraph = 0,
+            endCharInParagraph = 0,
+            isFirstSliceOfParagraph = true,
+            isLastSliceOfParagraph = true,
+            imagePath = paragraph.imagePath,
+            imageWidth = paragraph.imageWidth,
+            imageHeight = paragraph.imageHeight,
+            imageAlt = paragraph.imageAlt,
+            imageDisplayHeightDp = displayHeightDp,
+          )
+        )
+        usedHeightPx += sliceGap + topExtraPx + finalImageHeightPx + bottomExtraPx
+        continue
+      }
 
       val measured = measurer.measure(
         text = paragraph.text,

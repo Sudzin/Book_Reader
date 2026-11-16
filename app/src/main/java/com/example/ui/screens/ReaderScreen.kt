@@ -141,6 +141,7 @@ import com.example.reader.engine.Locator
 import com.example.reader.engine.ParagraphKind
 import com.example.reader.engine.PdfParser
 import com.example.reader.engine.ReaderParagraphStyleResolver
+import com.example.ui.components.BookInlineImage
 import com.example.ui.components.ThemedThinSlider
 import com.example.ui.components.inactiveTrackColor
 import com.example.ui.theme.AnimatedReaderColors
@@ -273,6 +274,8 @@ private fun ReaderScreenWithSharedTransition(
         startChapterIndex = readyState.currentUnitIndex,
         startParagraphIndex = startPara,
         speechSpeed = preferences.ttsSpeed,
+        pitch = preferences.ttsPitch,
+        voiceName = preferences.ttsVoiceName,
       )
     }
   }
@@ -403,9 +406,10 @@ private fun ReaderScreenWithSharedTransition(
           }
         }
 
-        LaunchedEffect(ttsForBook?.errorMessage) {
-          val err = ttsForBook?.errorMessage
-          if (!err.isNullOrBlank()) {
+        LaunchedEffect(ttsState.errorMessage) {
+          val err = ttsState.errorMessage
+          val relevant = !ttsState.isActive || ttsState.bookId == state.book.id
+          if (relevant && !err.isNullOrBlank()) {
             snackbarHostState.showSnackbar(err)
           }
         }
@@ -431,6 +435,8 @@ private fun ReaderScreenWithSharedTransition(
                 startChapterIndex = unitIdx,
                 startParagraphIndex = startPara,
                 speechSpeed = preferences.ttsSpeed,
+                pitch = preferences.ttsPitch,
+                voiceName = preferences.ttsVoiceName,
               )
             }
           }
@@ -957,9 +963,10 @@ private fun ReaderScreenWithSharedTransition(
             onNextParagraph = { ttsController.nextParagraph() },
             onSpeedStep = {
               val nextSpeed = when {
-                preferences.ttsSpeed < 1.15f -> 1.25f
-                preferences.ttsSpeed < 1.45f -> 1.5f
-                else -> 1.0f
+                preferences.ttsSpeed < 0.95f -> 1.0f
+                preferences.ttsSpeed < 1.12f -> 1.15f
+                preferences.ttsSpeed < 1.27f -> 1.3f
+                else -> 0.85f
               }
               viewModel.setTtsSpeed(nextSpeed)
               ttsController.setSpeed(nextSpeed)
@@ -1066,10 +1073,11 @@ private fun ReaderScreenWithSharedTransition(
                     ThemedThinSlider(
                       value = preferences.ttsSpeed,
                       onValueChange = {
-                        viewModel.setTtsSpeed(it)
-                        ttsController.setSpeed(it)
+                        val clamped = it.coerceIn(0.7f, 1.3f)
+                        viewModel.setTtsSpeed(clamped)
+                        ttsController.setSpeed(clamped)
                       },
-                      valueRange = 0.7f..2.0f,
+                      valueRange = 0.7f..1.3f,
                       activeColor = theme.accent,
                       inactiveColor = inactiveBarTrackColor,
                       modifier = Modifier
@@ -1394,6 +1402,21 @@ private fun ParagraphView(
         textAlign = spec.textAlign,
         color = theme.text,
         modifier = modifier,
+      )
+    }
+
+    ParagraphKind.IMAGE -> {
+      BookInlineImage(
+        imagePath = paragraph.imagePath,
+        imageWidth = paragraph.imageWidth,
+        imageHeight = paragraph.imageHeight,
+        imageAlt = paragraph.imageAlt,
+        paragraphIndex = paragraph.index,
+        theme = theme,
+        modifier = modifier.padding(
+          top = spec.extraTopPaddingDp,
+          bottom = spec.extraBottomPaddingDp,
+        ),
       )
     }
   }

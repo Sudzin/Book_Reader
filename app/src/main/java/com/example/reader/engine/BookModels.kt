@@ -7,6 +7,7 @@ enum class ParagraphKind {
   QUOTE,
   POEM,
   CODE,
+  IMAGE,
 }
 
 class BookParseException(
@@ -25,6 +26,10 @@ data class BookParagraph(
   val text: String,
   val kind: ParagraphKind = ParagraphKind.BODY,
   val charOffsetInChapter: Int = 0,
+  val imagePath: String? = null,
+  val imageWidth: Int = 0,
+  val imageHeight: Int = 0,
+  val imageAlt: String? = null,
 ) {
   val textLength: Int get() = text.length
 }
@@ -98,6 +103,10 @@ object ChapterMetricsBuilder {
           text = p.text,
           kind = p.kind,
           charOffsetInChapter = runningChapterChars,
+          imagePath = p.imagePath,
+          imageWidth = p.imageWidth,
+          imageHeight = p.imageHeight,
+          imageAlt = p.imageAlt,
         )
         runningChapterChars += p.text.length
         para

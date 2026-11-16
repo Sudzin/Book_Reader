@@ -27,6 +27,8 @@ data class TtsPlaybackState(
   val activeParagraphIndex: Int = -1,
   val totalChapters: Int = 0,
   val speed: Float = 1.0f,
+  val pitch: Float = 1.0f,
+  val voiceName: String? = null,
   val errorMessage: String? = null,
 )
 
@@ -62,6 +64,8 @@ class TtsPlaybackController(
   private var cursorChapterIdx: Int = 0
   private var cursorListIdx: Int = 0
   private var currentSpeed: Float = 1.0f
+  private var currentPitch: Float = 1.0f
+  private var currentVoiceName: String? = null
   private var utteranceGeneration: Long = 0L
   private var isSynthesizerReady: Boolean = false
 
@@ -88,6 +92,8 @@ class TtsPlaybackController(
         var nextText: String? = null
         var nextUtteranceId: String? = null
         var nextSpeed = 1.0f
+        var nextPitch = 1.0f
+        var nextVoice: String? = null
 
         synchronized(lock) {
           if (parts.generation != utteranceGeneration || !_state.value.isPlaying) return
@@ -97,7 +103,11 @@ class TtsPlaybackController(
             utteranceGeneration++
             activeContent = null
             activeBook = null
-            _state.value = TtsPlaybackState(speed = currentSpeed)
+            _state.value = TtsPlaybackState(
+              speed = currentSpeed,
+              pitch = currentPitch,
+              voiceName = currentVoiceName,
+            )
             stoppedHost = serviceHost
           } else {
             cursorChapterIdx = nextPos.first
@@ -108,6 +118,8 @@ class TtsPlaybackController(
             nextUtteranceId = formatUtteranceId(utteranceGeneration, cursorChapterIdx, cursorListIdx)
             nextText = paragraph.text
             nextSpeed = currentSpeed
+            nextPitch = currentPitch
+            nextVoice = currentVoiceName
             publishStateLocked(
               content = content,
               chapter = chapter,
@@ -127,11 +139,11 @@ class TtsPlaybackController(
           stoppedHost?.onPlaybackStopped()
         } else if (nextText != null && nextUtteranceId != null) {
           hostToNotify?.onPlaybackStateUpdated(_state.value)
-          synthesizer.speak(nextText!!, nextUtteranceId!!, nextSpeed)
+          synthesizer.speak(nextText!!, nextUtteranceId!!, nextSpeed, nextPitch, nextVoice)
         }
       }
 
-      override fun onUtteranceError(utteranceId: String) {
+      override fun onUtteranceError(utteranceId: String, message: String) {
         val parts = parseUtteranceId(utteranceId) ?: return
         var hostToNotify: TtsServiceHost? = null
         synchronized(lock) {
@@ -140,7 +152,8 @@ class TtsPlaybackController(
           _state.value = _state.value.copy(
             isPlaying = false,
             isPaused = _state.value.isActive,
-            errorMessage = "Ошибка синтеза речи",
+            isInitializing = false,
+            errorMessage = message.ifBlank { AndroidSpeechSynthesizer.MSG_ENGINE_UNRESPONSIVE },
           )
           hostToNotify = serviceHost
         }
@@ -167,6 +180,8 @@ class TtsPlaybackController(
     startChapterIndex: Int,
     startParagraphIndex: Int,
     speechSpeed: Float,
+    pitch: Float = currentPitch,
+    voiceName: String? = currentVoiceName,
   ): Boolean {
     val startPos = findSpeakableAtOrAfter(
       chapters = content.chapters,
@@ -176,7 +191,8 @@ class TtsPlaybackController(
 
     var textToSpeak: String? = null
     var utteranceId: String? = null
-    var speedToUse = speechSpeed.coerceIn(0.7f, 2.0f)
+    val speedToUse = speechSpeed.coerceIn(0.7f, 1.3f)
+    val pitchToUse = pitch.coerceIn(0.7f, 1.3f)
     var needInit = false
 
     synthesizer.stop()
@@ -187,6 +203,8 @@ class TtsPlaybackController(
       cursorChapterIdx = startPos.first
       cursorListIdx = startPos.second
       currentSpeed = speedToUse
+      currentPitch = pitchToUse
+      currentVoiceName = voiceName
       utteranceGeneration++
 
       val chapter = content.chapters[cursorChapterIdx]
@@ -241,7 +259,9 @@ class TtsPlaybackController(
               activeBook = null
               _state.value = TtsPlaybackState(
                 speed = currentSpeed,
-                errorMessage = "Синтезатор речи недоступен на устройстве",
+                pitch = currentPitch,
+                voiceName = currentVoiceName,
+                errorMessage = AndroidTtsVoiceGateway.MSG_ENGINE_UNAVAILABLE,
               )
               failedHost = serviceHost
             }
@@ -257,7 +277,7 @@ class TtsPlaybackController(
             val focusOk = host?.requestAudioFocus() ?: true
             if (focusOk) {
               host?.onPlaybackStateUpdated(_state.value)
-              synthesizer.speak(speakNow!!.first, speakNow!!.second, currentSpeed)
+              synthesizer.speak(speakNow!!.first, speakNow!!.second, currentSpeed, currentPitch, currentVoiceName)
             } else {
               pause()
             }
@@ -270,7 +290,7 @@ class TtsPlaybackController(
       val host = synchronized(lock) { serviceHost }
       val focusOk = host?.requestAudioFocus() ?: true
       if (focusOk) {
-        synthesizer.speak(textToSpeak!!, utteranceId!!, speedToUse)
+        synthesizer.speak(textToSpeak!!, utteranceId!!, speedToUse, pitchToUse, voiceName)
       } else {
         pause()
       }
@@ -303,6 +323,8 @@ class TtsPlaybackController(
     val text: String
     val utteranceId: String
     val speedToUse: Float
+    val pitchToUse: Float
+    val voiceToUse: String?
     val needInit: Boolean
 
     synchronized(lock) {
@@ -322,6 +344,8 @@ class TtsPlaybackController(
       text = paragraph.text
       utteranceId = formatUtteranceId(utteranceGeneration, cursorChapterIdx, cursorListIdx)
       speedToUse = currentSpeed
+      pitchToUse = currentPitch
+      voiceToUse = currentVoiceName
       needInit = !isSynthesizerReady
     }
 
@@ -331,17 +355,36 @@ class TtsPlaybackController(
       val capturedGen = synchronized(lock) { utteranceGeneration }
       synthesizer.initialize { ready ->
         isSynthesizerReady = ready
-        val shouldSpeak = synchronized(lock) {
-          utteranceGeneration == capturedGen && _state.value.isPlaying && ready
+        var shouldSpeak = false
+        var failedHost: TtsServiceHost? = null
+        synchronized(lock) {
+          if (utteranceGeneration == capturedGen && _state.value.isActive) {
+            if (ready && _state.value.isPlaying) {
+              shouldSpeak = true
+            } else if (!ready) {
+              activeContent = null
+              activeBook = null
+              _state.value = TtsPlaybackState(
+                speed = currentSpeed,
+                pitch = currentPitch,
+                voiceName = currentVoiceName,
+                errorMessage = AndroidTtsVoiceGateway.MSG_ENGINE_UNAVAILABLE,
+              )
+              failedHost = serviceHost
+            }
+          }
         }
-        if (shouldSpeak) {
+        if (failedHost != null) {
+          failedHost?.abandonAudioFocus()
+          failedHost?.onPlaybackStopped()
+        } else if (shouldSpeak) {
           val focusOk = host?.requestAudioFocus() ?: true
           if (focusOk) {
             synchronized(lock) {
               _state.value = _state.value.copy(isInitializing = false)
             }
             host?.onPlaybackStateUpdated(_state.value)
-            synthesizer.speak(text, utteranceId, speedToUse)
+            synthesizer.speak(text, utteranceId, speedToUse, pitchToUse, voiceToUse)
           } else {
             pause()
           }
@@ -351,7 +394,7 @@ class TtsPlaybackController(
       val focusOk = host?.requestAudioFocus() ?: true
       if (focusOk) {
         host?.onPlaybackStateUpdated(_state.value)
-        synthesizer.speak(text, utteranceId, speedToUse)
+        synthesizer.speak(text, utteranceId, speedToUse, pitchToUse, voiceToUse)
       } else {
         pause()
       }
@@ -372,6 +415,8 @@ class TtsPlaybackController(
     var textToSpeak: String? = null
     var utteranceId: String? = null
     var speedToUse = 1.0f
+    var pitchToUse = 1.0f
+    var voiceToUse: String? = null
     var shouldPlay = false
 
     synthesizer.stop()
@@ -407,6 +452,8 @@ class TtsPlaybackController(
         textToSpeak = paragraph.text
         utteranceId = formatUtteranceId(utteranceGeneration, cursorChapterIdx, cursorListIdx)
         speedToUse = currentSpeed
+        pitchToUse = currentPitch
+        voiceToUse = currentVoiceName
       }
     }
 
@@ -414,7 +461,7 @@ class TtsPlaybackController(
     if (shouldPlay && textToSpeak != null && utteranceId != null) {
       val focusOk = hostToNotify?.requestAudioFocus() ?: true
       if (focusOk) {
-        synthesizer.speak(textToSpeak!!, utteranceId!!, speedToUse)
+        synthesizer.speak(textToSpeak!!, utteranceId!!, speedToUse, pitchToUse, voiceToUse)
       } else {
         pause()
       }
@@ -445,6 +492,8 @@ class TtsPlaybackController(
         startChapterIndex = content.chapters[startPos.first].index,
         startParagraphIndex = content.chapters[startPos.first].paragraphs[startPos.second].index,
         speechSpeed = _state.value.speed,
+        pitch = _state.value.pitch,
+        voiceName = _state.value.voiceName,
       )
     }
 
@@ -473,7 +522,7 @@ class TtsPlaybackController(
   }
 
   fun setSpeed(newSpeed: Float) {
-    val clamped = newSpeed.coerceIn(0.7f, 2.0f)
+    val clamped = newSpeed.coerceIn(0.7f, 1.3f)
     val hostToNotify: TtsServiceHost?
     val updated: TtsPlaybackState
     synchronized(lock) {
@@ -483,6 +532,38 @@ class TtsPlaybackController(
       hostToNotify = serviceHost
     }
     synthesizer.setSpeechRate(clamped)
+    if (updated.isActive) {
+      hostToNotify?.onPlaybackStateUpdated(updated)
+    }
+  }
+
+  fun setPitch(newPitch: Float) {
+    val clamped = newPitch.coerceIn(0.7f, 1.3f)
+    val hostToNotify: TtsServiceHost?
+    val updated: TtsPlaybackState
+    synchronized(lock) {
+      currentPitch = clamped
+      _state.value = _state.value.copy(pitch = clamped)
+      updated = _state.value
+      hostToNotify = serviceHost
+    }
+    synthesizer.setPitch(clamped)
+    if (updated.isActive) {
+      hostToNotify?.onPlaybackStateUpdated(updated)
+    }
+  }
+
+  fun setVoiceName(voiceName: String?) {
+    val clean = voiceName?.trim()?.takeIf { it.isNotEmpty() }
+    val hostToNotify: TtsServiceHost?
+    val updated: TtsPlaybackState
+    synchronized(lock) {
+      currentVoiceName = clean
+      _state.value = _state.value.copy(voiceName = clean)
+      updated = _state.value
+      hostToNotify = serviceHost
+    }
+    synthesizer.setVoice(clean)
     if (updated.isActive) {
       hostToNotify?.onPlaybackStateUpdated(updated)
     }
@@ -506,7 +587,11 @@ class TtsPlaybackController(
       utteranceGeneration++
       activeContent = null
       activeBook = null
-      _state.value = TtsPlaybackState(speed = currentSpeed)
+      _state.value = TtsPlaybackState(
+        speed = currentSpeed,
+        pitch = currentPitch,
+        voiceName = currentVoiceName,
+      )
       hostToStop = serviceHost
     }
     synthesizer.stop()
@@ -547,6 +632,8 @@ class TtsPlaybackController(
       activeParagraphIndex = paragraphIndex,
       totalChapters = content.chapters.size,
       speed = currentSpeed,
+      pitch = currentPitch,
+      voiceName = currentVoiceName,
       errorMessage = error,
     )
   }

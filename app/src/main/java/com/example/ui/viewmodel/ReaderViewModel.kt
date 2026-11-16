@@ -529,8 +529,21 @@ class ReaderViewModel(
   }
 
   fun setTtsSpeed(speed: Float) {
-    TtsPlaybackManager.peek()?.setSpeed(speed)
-    viewModelScope.launch { preferencesRepository.updateTtsSpeed(speed) }
+    val clamped = speed.coerceIn(0.7f, 1.3f)
+    TtsPlaybackManager.peek()?.setSpeed(clamped)
+    viewModelScope.launch { preferencesRepository.updateTtsSpeed(clamped) }
+  }
+
+  fun setTtsPitch(pitch: Float) {
+    val clamped = pitch.coerceIn(0.7f, 1.3f)
+    TtsPlaybackManager.peek()?.setPitch(clamped)
+    viewModelScope.launch { preferencesRepository.updateTtsPitch(clamped) }
+  }
+
+  fun setTtsVoiceName(voiceName: String?) {
+    val clean = voiceName?.trim()?.takeIf { it.isNotEmpty() }
+    TtsPlaybackManager.peek()?.setVoiceName(clean)
+    viewModelScope.launch { preferencesRepository.updateTtsVoiceName(clean) }
   }
 
   fun markTtsNotificationPrompted() {

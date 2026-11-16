@@ -50,6 +50,11 @@ class BookRepository(
   private val cacheDir: File
     get() = File(context.filesDir, "book_cache").apply { if (!exists()) mkdirs() }
 
+  private val bookImagesDir: File
+    get() = File(context.filesDir, "book_images").apply { if (!exists()) mkdirs() }
+
+  private fun bookImageDirForHash(hash: String): File = File(bookImagesDir, hash)
+
   val allBooks: Flow<List<BookEntity>> = bookDao.observeAllBooks()
   val allQuotes: Flow<List<QuoteEntity>> = quoteDao.observeAllQuotes()
 
@@ -66,6 +71,7 @@ class BookRepository(
     var storedFile: File? = null
     var cacheFile: File? = null
     var coverFile: File? = null
+    var createdImagesDir: File? = null
     try {
       val resolver = context.contentResolver
       val displayName = queryFileName(uri) ?: "book_${System.currentTimeMillis()}"
@@ -104,9 +110,14 @@ class BookRepository(
         .substringBeforeLast('.')
         .ifBlank { "Без названия" }
 
+      val imagesDir = bookImageDirForHash(hash)
+      if (!imagesDir.exists()) {
+        createdImagesDir = imagesDir
+      }
+
       val (metadata, parsedContent) = when (format) {
-        BookFormat.EPUB -> EpubParser.parseForImport(stored, fallbackTitle)
-        BookFormat.FB2 -> Fb2Parser.parseForImport(stored, fallbackTitle)
+        BookFormat.EPUB -> EpubParser.parseForImport(stored, fallbackTitle, imagesDir)
+        BookFormat.FB2 -> Fb2Parser.parseForImport(stored, fallbackTitle, imagesDir)
         BookFormat.TXT -> TxtParser.parseForImport(stored, fallbackTitle)
         BookFormat.PDF -> PdfParser.parseForImport(stored, fallbackTitle)
       }
@@ -146,16 +157,19 @@ class BookRepository(
       runCatching { storedFile?.delete() }
       runCatching { cacheFile?.delete() }
       runCatching { coverFile?.delete() }
+      runCatching { createdImagesDir?.deleteRecursively() }
       ImportResult.Failure(e.message)
     } catch (_: OutOfMemoryError) {
       runCatching { storedFile?.delete() }
       runCatching { cacheFile?.delete() }
       runCatching { coverFile?.delete() }
+      runCatching { createdImagesDir?.deleteRecursively() }
       ImportResult.Failure("Файл слишком большой или повреждён.")
     } catch (_: Throwable) {
       runCatching { storedFile?.delete() }
       runCatching { cacheFile?.delete() }
       runCatching { coverFile?.delete() }
+      runCatching { createdImagesDir?.deleteRecursively() }
       ImportResult.Failure("Не удалось открыть файл: возможно, он повреждён или имеет неверный формат.")
     } finally {
       runCatching { tempFile?.delete() }
@@ -185,15 +199,21 @@ class BookRepository(
           com.example.reader.engine.BookParseException("Неподдерживаемый формат книги.")
         )
 
+      val imagesDir = bookImageDirForHash(book.contentHash)
       val (metadata, parsedContent) = when (format) {
-        BookFormat.EPUB -> EpubParser.parseForImport(file, book.title)
-        BookFormat.FB2 -> Fb2Parser.parseForImport(file, book.title)
+        BookFormat.EPUB -> EpubParser.parseForImport(file, book.title, imagesDir)
+        BookFormat.FB2 -> Fb2Parser.parseForImport(file, book.title, imagesDir)
         BookFormat.TXT -> TxtParser.parseForImport(file, book.title)
         BookFormat.PDF -> PdfParser.parseForImport(file, book.title)
       }
 
       val newCacheFile = File(cacheDir, "book_${book.id}_${UUID.randomUUID()}.lcache")
       BookCacheStorage.write(newCacheFile, parsedContent)
+      book.cacheFilePath?.let { oldPath ->
+        if (oldPath != newCacheFile.absolutePath) {
+          runCatching { File(oldPath).delete() }
+        }
+      }
       bookDao.updateCacheMetadata(
         bookId = book.id,
         cacheFilePath = newCacheFile.absolutePath,
@@ -348,6 +368,9 @@ class BookRepository(
     runCatching { File(book.localFilePath).delete() }
     book.coverPath?.let { runCatching { File(it).delete() } }
     book.cacheFilePath?.let { runCatching { File(it).delete() } }
+    if (book.contentHash.isNotBlank()) {
+      runCatching { bookImageDirForHash(book.contentHash).deleteRecursively() }
+    }
     bookDao.deleteBookById(book.id)
   }
 

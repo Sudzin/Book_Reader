@@ -1,7 +1,6 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,10 +28,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.BookEntity
+import com.example.reader.engine.BookImageExtractor
 import com.example.ui.theme.LiterataFontFamily
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 
 internal fun bookCoverInitial(title: String): String {
   val ch = title.trim().firstOrNull { it.isLetterOrDigit() }
@@ -50,9 +49,7 @@ fun BookCoverArt(
   val bitmap by produceState<Bitmap?>(initialValue = null, key1 = book.coverPath) {
     value = withContext(Dispatchers.IO) {
       val path = book.coverPath ?: return@withContext null
-      val file = File(path)
-      if (!file.exists()) return@withContext null
-      runCatching { BitmapFactory.decodeFile(path) }.getOrNull()
+      BookImageExtractor.decodeSampledBitmap(path, maxWidthPx = 900, maxHeightPx = 1200)
     }
   }
 

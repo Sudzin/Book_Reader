@@ -8,7 +8,7 @@ import java.io.File
 
 object BookCacheStorage {
   private const val MAGIC = 0x4C535432 // "LST2"
-  private const val VERSION = 1
+  private const val VERSION = 2
   private const val TYPE_REFLOWABLE = 1
   private const val TYPE_PDF = 2
 
@@ -34,6 +34,10 @@ object BookCacheStorage {
               out.writeByte(p.kind.ordinal)
               out.writeInt(p.charOffsetInChapter)
               out.writeUTFString(p.text)
+              out.writeUTFString(p.imagePath.orEmpty())
+              out.writeInt(p.imageWidth)
+              out.writeInt(p.imageHeight)
+              out.writeUTFString(p.imageAlt.orEmpty())
             }
           }
           out.writeInt(content.toc.size)
@@ -89,12 +93,20 @@ object BookCacheStorage {
                 val kindOrd = input.readByte().toInt().coerceIn(0, ParagraphKind.entries.lastIndex)
                 val charOffsetInChapter = input.readInt()
                 val text = input.readUTFString()
+                val imagePath = input.readUTFString().ifEmpty { null }
+                val imageWidth = input.readInt()
+                val imageHeight = input.readInt()
+                val imageAlt = input.readUTFString().ifEmpty { null }
                 paragraphs.add(
                   BookParagraph(
                     index = pIndex,
                     text = text,
                     kind = ParagraphKind.entries[kindOrd],
                     charOffsetInChapter = charOffsetInChapter,
+                    imagePath = imagePath,
+                    imageWidth = imageWidth,
+                    imageHeight = imageHeight,
+                    imageAlt = imageAlt,
                   )
                 )
               }

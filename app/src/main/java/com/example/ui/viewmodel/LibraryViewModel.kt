@@ -152,9 +152,21 @@ class LibraryViewModel(
   }
 
   fun setTtsSpeed(speed: Float) {
-    val clamped = speed.coerceIn(0.7f, 2.0f)
+    val clamped = speed.coerceIn(0.7f, 1.3f)
     TtsPlaybackManager.peek()?.setSpeed(clamped)
     viewModelScope.launch { preferencesRepository.updateTtsSpeed(clamped) }
+  }
+
+  fun setTtsPitch(pitch: Float) {
+    val clamped = pitch.coerceIn(0.7f, 1.3f)
+    TtsPlaybackManager.peek()?.setPitch(clamped)
+    viewModelScope.launch { preferencesRepository.updateTtsPitch(clamped) }
+  }
+
+  fun setTtsVoiceName(voiceName: String?) {
+    val clean = voiceName?.trim()?.takeIf { it.isNotEmpty() }
+    TtsPlaybackManager.peek()?.setVoiceName(clean)
+    viewModelScope.launch { preferencesRepository.updateTtsVoiceName(clean) }
   }
 
   class Factory(

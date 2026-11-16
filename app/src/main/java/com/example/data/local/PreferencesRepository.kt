@@ -122,6 +122,8 @@ data class ReaderPreferences(
   val volumeKeyNavigation: Boolean = true,
   val keepScreenOn: Boolean = true,
   val ttsSpeed: Float = 1.0f,
+  val ttsPitch: Float = 1.0f,
+  val ttsVoiceName: String? = null,
   val ttsNotificationPrompted: Boolean = false,
 )
 
@@ -139,6 +141,8 @@ class PreferencesRepository(private val context: Context) {
     val VOLUME_NAV = booleanPreferencesKey("volume_key_nav")
     val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
     val TTS_SPEED = floatPreferencesKey("tts_speed")
+    val TTS_PITCH = floatPreferencesKey("tts_pitch")
+    val TTS_VOICE_NAME = stringPreferencesKey("tts_voice_name")
     val TTS_NOTIFICATION_PROMPTED = booleanPreferencesKey("tts_notification_prompted")
   }
 
@@ -161,7 +165,9 @@ class PreferencesRepository(private val context: Context) {
       useDynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: false,
       volumeKeyNavigation = prefs[Keys.VOLUME_NAV] ?: true,
       keepScreenOn = prefs[Keys.KEEP_SCREEN_ON] ?: true,
-      ttsSpeed = (prefs[Keys.TTS_SPEED] ?: 1.0f).coerceIn(0.7f, 2.0f),
+      ttsSpeed = (prefs[Keys.TTS_SPEED] ?: 1.0f).coerceIn(0.7f, 1.3f),
+      ttsPitch = (prefs[Keys.TTS_PITCH] ?: 1.0f).coerceIn(0.7f, 1.3f),
+      ttsVoiceName = prefs[Keys.TTS_VOICE_NAME]?.takeIf { it.isNotBlank() },
       ttsNotificationPrompted = prefs[Keys.TTS_NOTIFICATION_PROMPTED] ?: false,
     )
   }
@@ -211,7 +217,22 @@ class PreferencesRepository(private val context: Context) {
   }
 
   suspend fun updateTtsSpeed(speed: Float) {
-    context.readerDataStore.edit { it[Keys.TTS_SPEED] = speed.coerceIn(0.7f, 2.0f) }
+    context.readerDataStore.edit { it[Keys.TTS_SPEED] = speed.coerceIn(0.7f, 1.3f) }
+  }
+
+  suspend fun updateTtsPitch(pitch: Float) {
+    context.readerDataStore.edit { it[Keys.TTS_PITCH] = pitch.coerceIn(0.7f, 1.3f) }
+  }
+
+  suspend fun updateTtsVoiceName(voiceName: String?) {
+    context.readerDataStore.edit { prefs ->
+      val clean = voiceName?.trim()?.takeIf { it.isNotEmpty() }
+      if (clean == null) {
+        prefs.remove(Keys.TTS_VOICE_NAME)
+      } else {
+        prefs[Keys.TTS_VOICE_NAME] = clean
+      }
+    }
   }
 
   suspend fun markTtsNotificationPrompted() {

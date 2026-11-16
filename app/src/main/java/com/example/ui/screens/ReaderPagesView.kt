@@ -86,6 +86,7 @@ import com.example.reader.engine.PageSlice
 import com.example.reader.engine.PaginationCacheKey
 import com.example.reader.engine.ParagraphKind
 import com.example.reader.engine.ReaderParagraphStyleResolver
+import com.example.ui.components.BookInlineImage
 import com.example.ui.theme.AnimatedReaderColors
 import com.example.ui.theme.LocalAnimationsEnabled
 import com.example.ui.theme.rememberAnimatedReaderColors
@@ -724,6 +725,19 @@ private fun PageSliceView(
         style = spec.textStyle,
         textAlign = spec.textAlign,
         color = theme.text,
+        modifier = baseModifier.padding(top = topPad, bottom = bottomPad),
+      )
+    }
+
+    ParagraphKind.IMAGE -> {
+      BookInlineImage(
+        imagePath = slice.imagePath,
+        imageWidth = slice.imageWidth,
+        imageHeight = slice.imageHeight,
+        imageAlt = slice.imageAlt,
+        paragraphIndex = slice.paragraphIndex,
+        theme = theme,
+        exactHeightDp = if (slice.imageDisplayHeightDp > 0f) slice.imageDisplayHeightDp.dp else null,
         modifier = baseModifier.padding(top = topPad, bottom = bottomPad),
       )
     }

@@ -496,6 +496,8 @@ private fun ListayApp(
                   onToggleVolumePaging = libraryViewModel::setVolumeKeyNavigation,
                   onToggleKeepScreenOn = libraryViewModel::setKeepScreenOn,
                   onTtsSpeedChanged = libraryViewModel::setTtsSpeed,
+                  onTtsPitchChanged = libraryViewModel::setTtsPitch,
+                  onTtsVoiceSelected = libraryViewModel::setTtsVoiceName,
                 )
               }
 
