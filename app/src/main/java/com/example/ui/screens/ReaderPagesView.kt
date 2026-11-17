@@ -737,7 +737,7 @@ private fun PageSliceView(
         imageAlt = slice.imageAlt,
         paragraphIndex = slice.paragraphIndex,
         theme = theme,
-        exactHeightDp = if (slice.imageDisplayHeightDp > 0f) slice.imageDisplayHeightDp.dp else null,
+        maxHeightDp = if (slice.imageDisplayHeightDp > 0f) slice.imageDisplayHeightDp.dp else 440.dp,
         modifier = baseModifier.padding(top = topPad, bottom = bottomPad),
       )
     }

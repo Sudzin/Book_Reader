@@ -6,10 +6,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -50,7 +52,6 @@ fun BookInlineImage(
   theme: AnimatedReaderColors,
   modifier: Modifier = Modifier,
   maxHeightDp: Dp = 440.dp,
-  exactHeightDp: Dp? = null,
 ) {
   val state by produceState(
     initialValue = DecodedImageState(done = false, bitmap = null),
@@ -67,25 +68,32 @@ fun BookInlineImage(
   val shape = RoundedCornerShape(10.dp)
   val loadedBitmap = state.bitmap
 
-  Box(
+  BoxWithConstraints(
     modifier = modifier
       .fillMaxWidth()
       .testTag("reader_inline_image_$paragraphIndex"),
     contentAlignment = Alignment.Center,
   ) {
+    val availableWidthDp = maxWidth.coerceAtLeast(64.dp)
+    val effectiveMaxHeightDp = maxHeightDp.coerceAtLeast(48.dp)
+
     if (loadedBitmap != null) {
-      val needsLightBackdrop = theme.isDark && loadedBitmap.hasAlpha()
-      val sizeModifier = if (exactHeightDp != null) {
-        Modifier
-          .fillMaxWidth()
-          .height(exactHeightDp)
+      val bw = loadedBitmap.width.coerceAtLeast(1)
+      val bh = loadedBitmap.height.coerceAtLeast(1)
+      val aspect = bw.toFloat() / bh.toFloat()
+
+      val targetWidthDp = (bw * 2.2f).dp.coerceAtMost(availableWidthDp)
+      val desiredHeightDp = targetWidthDp / aspect
+      val (finalWidthDp, finalHeightDp) = if (desiredHeightDp > effectiveMaxHeightDp) {
+        (effectiveMaxHeightDp * aspect).coerceAtMost(availableWidthDp) to effectiveMaxHeightDp
       } else {
-        Modifier
-          .fillMaxWidth()
-          .heightIn(max = maxHeightDp)
+        targetWidthDp to desiredHeightDp
       }
+
+      val needsLightBackdrop = theme.isDark && loadedBitmap.hasAlpha()
       Box(
-        modifier = sizeModifier
+        modifier = Modifier
+          .size(width = finalWidthDp.coerceAtLeast(24.dp), height = finalHeightDp.coerceAtLeast(24.dp))
           .clip(shape)
           .then(
             if (needsLightBackdrop) {
@@ -102,34 +110,30 @@ fun BookInlineImage(
           bitmap = loadedBitmap.asImageBitmap(),
           contentDescription = imageAlt?.takeIf { it.isNotBlank() } ?: "Иллюстрация из книги",
           contentScale = ContentScale.Fit,
+          filterQuality = FilterQuality.High,
           modifier = Modifier
-            .then(
-              if (exactHeightDp != null) {
-                Modifier.height(if (needsLightBackdrop) (exactHeightDp - 12.dp).coerceAtLeast(16.dp) else exactHeightDp)
-              } else {
-                Modifier.heightIn(max = maxHeightDp)
-              }
-            )
-            .fillMaxWidth()
+            .fillMaxSize()
             .clip(shape),
         )
       }
     } else if (!state.done) {
-      val aspect = if (imageWidth > 0 && imageHeight > 0) {
-        (imageHeight.toFloat() / imageWidth.toFloat()).coerceIn(0.4f, 1.4f)
+      val bw = imageWidth.coerceAtLeast(1)
+      val bh = imageHeight.coerceAtLeast(1)
+      val aspect = if (imageWidth > 0 && imageHeight > 0) bw.toFloat() / bh.toFloat() else 1.5f
+      val targetWidthDp = if (imageWidth > 0) {
+        (bw * 2.2f).dp.coerceAtMost(availableWidthDp)
       } else {
-        0.6f
+        availableWidthDp
       }
-      val placeholderHeight = exactHeightDp ?: (220f * aspect).dp.coerceIn(96.dp, maxHeightDp)
+      val placeholderHeight = (targetWidthDp / aspect).coerceIn(48.dp, effectiveMaxHeightDp)
       Box(
         modifier = Modifier
-          .fillMaxWidth()
-          .height(placeholderHeight)
+          .size(width = targetWidthDp, height = placeholderHeight)
           .clip(shape)
           .background(theme.surfaceContainerLow),
       )
     } else {
-      val fallbackHeight = exactHeightDp?.coerceAtMost(140.dp) ?: 96.dp
+      val fallbackHeight = effectiveMaxHeightDp.coerceAtMost(96.dp)
       Box(
         modifier = Modifier
           .fillMaxWidth()

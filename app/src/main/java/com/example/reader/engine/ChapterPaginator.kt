@@ -388,8 +388,8 @@ class ChapterPaginator(
         val imgW = paragraph.imageWidth
         val imgH = paragraph.imageHeight
         val maxImageHeightPx = ((safeHeightPx - topExtraPx - bottomExtraPx) * 0.78f).coerceAtLeast(80f)
-        val targetWidthPx = if (imgW in 1..140 && imgH in 1..140) {
-          (imgW * density.density).coerceAtMost(effectiveWidthPx.toFloat())
+        val targetWidthPx = if (imgW > 0) {
+          (imgW * 2.2f * density.density).coerceAtMost(effectiveWidthPx.toFloat())
         } else {
           effectiveWidthPx.toFloat()
         }

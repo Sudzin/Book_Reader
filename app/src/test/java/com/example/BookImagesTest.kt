@@ -3,11 +3,17 @@ package com.example
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Base64
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.AppDatabase
@@ -30,10 +36,13 @@ import com.example.reader.engine.MeasuredParagraphLayout
 import com.example.reader.engine.ParagraphKind
 import com.example.reader.engine.TextLineMeasurer
 import com.example.reader.engine.TocEntry
+import com.example.data.local.ReaderThemeMode
+import com.example.ui.components.BookInlineImage
 import com.example.ui.screens.PageNavigationHandle
 import com.example.ui.screens.ReaderScreen
 import com.example.ui.screens.ReflowablePagesReader
 import com.example.ui.theme.ListayTheme
+import com.example.ui.theme.rememberAnimatedReaderColors
 import com.example.ui.viewmodel.ReaderViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -494,5 +503,37 @@ class BookImagesTest {
     } finally {
       db.close()
     }
+  }
+
+  @Test
+  fun `BookInlineImage scales small formula images to readable column width`() {
+    val formulaFile = tempFolder.newFile("formula.png").apply {
+      writeBytes(createPngBytes(width = 160, height = 45))
+    }
+
+    composeTestRule.setContent {
+      ListayTheme {
+        val theme = rememberAnimatedReaderColors(ReaderThemeMode.SEPIA, animationsEnabled = false)
+        Box(modifier = androidx.compose.ui.Modifier.width(320.dp)) {
+          BookInlineImage(
+            imagePath = formulaFile.absolutePath,
+            imageWidth = 160,
+            imageHeight = 45,
+            imageAlt = "Дзета-функция",
+            paragraphIndex = 7,
+            theme = theme,
+          )
+        }
+      }
+    }
+
+    composeTestRule.waitUntil(timeoutMillis = 5000L) {
+      composeTestRule.onAllNodesWithContentDescription("Дзета-функция").fetchSemanticsNodes().isNotEmpty()
+    }
+    val bounds = composeTestRule.onNodeWithContentDescription("Дзета-функция").getUnclippedBoundsInRoot()
+    val renderedWidthDp = bounds.right.value - bounds.left.value
+    val renderedHeightDp = bounds.bottom.value - bounds.top.value
+    assertTrue("Expected formula to scale to full 320dp column, was $renderedWidthDp", renderedWidthDp >= 300f)
+    assertTrue("Expected formula height >= 80dp, was $renderedHeightDp", renderedHeightDp >= 80f)
   }
 }
